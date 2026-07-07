@@ -10,5 +10,12 @@ data/user_settings.json
 *.egg-info/
 *.tmp.*
 
+# 회사 PPT 양식(업로드) — 사내 자료, 커밋 금지
+assets/*.pptx
+assets/*.potx
+
+# 생성 산출물(교재·PPT·강의계획서 등) — 커밋 금지
+_assets/
+
 # 사내 자료·원본·키 포함 — GitHub 업로드 금지
 _context/

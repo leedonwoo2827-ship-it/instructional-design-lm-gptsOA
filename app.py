@@ -10,6 +10,7 @@ URL·API 키·모델은 상단 '연결 설정'(접기/펴기)에서 입력하며
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import markdown as md_lib
 import streamlit as st
@@ -24,6 +25,14 @@ from core.pptx_export import outline_to_pptx  # noqa: E402
 from core.viz import (  # noqa: E402
     ICON_DOC, ICON_INFO, ICON_SLIDE, bloom_chart_html, bloom_counts,
 )
+
+# 회사 PPT 양식(.pptx) — 있으면 PPTX 생성 시 테마·마스터를 상속. (커밋 제외)
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+TEMPLATE_PATH = ASSETS_DIR / "company_template.pptx"
+
+
+def template_arg():
+    return str(TEMPLATE_PATH) if TEMPLATE_PATH.exists() else None
 
 st.set_page_config(
     page_title="교수설계 가이드 에이전트",
@@ -336,6 +345,19 @@ if ss.step == 3:
                     ss._pending = {"kind": "gen_both", "doc": "script"}
                     st.rerun()
 
+            _tpl_on = TEMPLATE_PATH.exists()
+            with st.expander(f"PPT 회사 양식(.pptx) — {'적용됨 ✓' if _tpl_on else '기본 양식 사용 중'}"):
+                st.caption("회사 양식 .pptx 를 올리면 PPTX 저장 시 그 테마·마스터·폰트·레이아웃을 상속합니다. "
+                           "(Anthropic pptx 스킬의 템플릿 기반 방식) 양식 파일은 로컬 assets/ 에만 저장되고 GitHub 에 올라가지 않습니다.")
+                up = st.file_uploader("회사 양식 업로드 (.pptx / .potx)", type=["pptx", "potx"], key="tpl_up")
+                if up is not None:
+                    ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+                    TEMPLATE_PATH.write_bytes(up.getvalue())
+                    st.success("회사 양식이 적용되었습니다. 이후 생성/저장되는 PPTX 에 반영됩니다.")
+                if _tpl_on and st.button("양식 제거(기본으로 되돌리기)", key="tpl_rm"):
+                    TEMPLATE_PATH.unlink(missing_ok=True)
+                    st.rerun()
+
     if ss.syllabus_md:
         def render_script_tab(md_key, doc_key, is_ppt):
             """탭 내부: 상단 다운로드 버튼 → 본문/컨트롤용 placeholder 반환."""
@@ -348,7 +370,7 @@ if ss.step == 3:
                 dc[1].download_button("DOC", md_to_doc_bytes(cur), file_name=fn + ".doc",
                                       mime="application/msword", key=f"doc_{doc_key}", use_container_width=True)
                 if is_ppt:
-                    pptx = outline_to_pptx(cur, deck_title=fn)
+                    pptx = outline_to_pptx(cur, deck_title=fn, template_path=template_arg())
                     if pptx:
                         dc[2].download_button(
                             "PPTX", pptx, file_name=fn + ".pptx",

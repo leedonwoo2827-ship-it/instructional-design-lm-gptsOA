@@ -23,6 +23,9 @@ MODELS: dict[str, str] = {
     "claude-sonnet-4-6": "Claude Sonnet 4.6 (권장 · 균형)",
     "claude-opus-4-7": "Claude Opus 4.7 (고품질)",
     "claude-haiku-4-5": "Claude Haiku 4.5 (빠름 · 경제적)",
+    "deepseek-v4-flash": "DeepSeek V4 Flash (빠름 · 저비용)",
+    "deepseek-v4-flash-think": "DeepSeek V4 Flash Think (추론)",
+    "deepseek-v4-pro": "DeepSeek V4 Pro (고품질)",
 }
 
 
