@@ -90,6 +90,7 @@ def outline_to_pptx(md: str, deck_title: str = "강의 슬라이드",
 
     title_layout = _find_layout(prs, ["title slide", "제목 슬라이드", "표지", "cover"], 0)
     body_layout = _find_layout(prs, ["title and content", "제목 및 내용", "content", "내용", "본문"], 1)
+    section_layout = _find_layout(prs, ["section header", "구역 머리글", "섹션", "구역"], 2)
 
     # ── 표지 ──
     s = prs.slides.add_slide(title_layout)
@@ -100,6 +101,7 @@ def outline_to_pptx(md: str, deck_title: str = "강의 슬라이드",
         sub.text_frame.text = "교수설계 가이드 에이전트 · Mayer 멀티미디어 원리 기반"
 
     # ── 슬라이드 블록 파싱 ──
+    label_re = re.compile(r"^\s*[-*+]?\s*\*{0,2}([^*:：]{1,24})\*{0,2}\s*[:：]\s*(.*)$")
     blocks = re.split(r"(?m)^\s*#{2,3}\s+", md or "")
     slide_blocks = [b for b in blocks if re.match(r"\s*슬라이드", b)]
     if not slide_blocks:
@@ -110,23 +112,47 @@ def outline_to_pptx(md: str, deck_title: str = "강의 슬라이드",
         header = lines[0].strip() if lines else "슬라이드"
         title = re.sub(r"^슬라이드\s*\d+\s*[—\-:：]\s*", "", header).strip() or header
 
-        body, notes, in_notes = [], [], False
+        layout_hint, body, notes, mode = "", [], [], "body"
         for ln in lines[1:]:
             t = ln.strip()
             if not t:
                 continue
-            if "발표자 노트" in t:
-                in_notes = True
-                after = re.split(r"[:：]", t, 1)
-                if len(after) > 1 and after[1].strip():
-                    notes.append(_clean(after[1]))
+            m = label_re.match(t)
+            if m:
+                label, rest = m.group(1).strip(), m.group(2).strip()
+                if "레이아웃" in label:
+                    layout_hint = rest
+                    mode = "body"
+                    continue
+                if "발표자" in label and "노트" in label:
+                    mode = "notes"
+                    if rest:
+                        notes.append(_clean(rest))
+                    continue
+                if "시각자료" in label or "강조" in label:
+                    if rest:
+                        notes.append(f"({label}) {_clean(rest)}")
+                    mode = "body"
+                    continue
+                if "핵심" in label and "메시지" in label:
+                    if rest:
+                        body.append(_clean(rest))
+                    mode = "body"
+                    continue
+                if "본문" in label:
+                    # "불릿 3~5개" 같은 안내 문구는 건너뜀
+                    if rest and not re.search(r"불릿|\d\s*~?\s*\d*\s*개", rest):
+                        body.append(_clean(rest))
+                    mode = "body"
+                    continue
+                # 기타 라벨: 값만 본문/노트에
+                if rest:
+                    (notes if mode == "notes" else body).append(_clean(rest))
                 continue
-            if in_notes:
-                notes.append(_clean(t))
-            else:
-                body.append(_clean(t))
+            (notes if mode == "notes" else body).append(_clean(t))
 
-        slide = prs.slides.add_slide(body_layout)
+        is_section = bool(layout_hint) and ("섹션" in layout_hint or "표지" in layout_hint)
+        slide = prs.slides.add_slide(section_layout if is_section else body_layout)
         if slide.shapes.title is not None:
             slide.shapes.title.text = title[:120]
         bph = _body_placeholder(slide)
