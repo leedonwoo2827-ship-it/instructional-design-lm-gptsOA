@@ -9,6 +9,8 @@ URL·API 키·모델은 상단 '연결 설정'(접기/펴기)에서 입력하며
 """
 from __future__ import annotations
 
+import time
+
 import markdown as md_lib
 import streamlit as st
 from dotenv import load_dotenv
@@ -134,18 +136,26 @@ def ensure_ready() -> bool:
     return True
 
 
-def stream_into(placeholder, system: str, messages: list) -> str:
+def stream_into(placeholder, system: str, messages: list, label: str = "생성") -> str:
     provider = llm_mod.build_provider(ss.settings)
     full = ""
     placeholder.markdown("**작성 중…** 잠시만 기다려 주세요. 내용이 이 영역에 실시간으로 나타납니다. ▌")
+    t0 = time.time()
+    last = 0
+    print(f"[{label}] 시작 · 모델={ss.settings.model}", flush=True)
     try:
         for delta in provider.stream(system, messages,
                                      max_tokens=ss.settings.max_tokens,
                                      temperature=ss.settings.temperature):
             full += delta
             placeholder.markdown(full + " ▌")
+            if len(full) - last >= 400:
+                last = len(full)
+                print(f"[{label}] …{len(full):,}자 생성 중 ({time.time() - t0:.0f}s)", flush=True)
         placeholder.markdown(full)
+        print(f"[{label}] 완료 · {len(full):,}자 · {time.time() - t0:.1f}s", flush=True)
     except Exception as e:  # noqa: BLE001
+        print(f"[{label}] 오류: {type(e).__name__}: {e}", flush=True)
         st.error(f"생성 실패: {type(e).__name__}: {e}\n\n사내망 연결과 API 키를 확인하세요.")
         if full:
             placeholder.markdown(full)
@@ -204,23 +214,24 @@ def run_pending(pending: dict, placeholder) -> None:
     if doc == "syllabus":
         if kind == "check":
             msgs = [{"role": "user", "content": f"다음 산출물을 점검해 주세요.\n\n{ss.syllabus_md}"}]
-            rep = stream_into(placeholder, prompts.SYS_CHECK_SYL, msgs)
+            rep = stream_into(placeholder, prompts.SYS_CHECK_SYL, msgs, label="강의계획서 점검")
             if rep:
                 ss.syllabus_md += f"\n\n---\n\n## 정렬 점검 보고\n\n{rep}"
         else:
-            full = stream_into(placeholder, prompts.SYS_SYLLABUS, ss.syllabus_msgs)
+            full = stream_into(placeholder, prompts.SYS_SYLLABUS, ss.syllabus_msgs, label="강의계획서")
             if full:
                 ss.syllabus_md = full
                 ss.syllabus_msgs.append({"role": "assistant", "content": full})
     else:  # script
         sys_s = prompts.SYS_SCRIPT_DOC if ss.fmt == "doc" else prompts.SYS_SCRIPT_PPT
+        _wk = f"{ss.script_week}주차 " + ("원고" if ss.fmt == "doc" else "PPT 개요")
         if kind == "check":
             msgs = [{"role": "user", "content": f"다음 산출물을 점검해 주세요.\n\n{ss.script_md}"}]
-            rep = stream_into(placeholder, prompts.SYS_CHECK_SCR, msgs)
+            rep = stream_into(placeholder, prompts.SYS_CHECK_SCR, msgs, label=f"{_wk} 점검")
             if rep:
                 ss.script_md += f"\n\n---\n\n## 정렬 점검 보고\n\n{rep}"
         else:
-            full = stream_into(placeholder, sys_s, ss.script_msgs)
+            full = stream_into(placeholder, sys_s, ss.script_msgs, label=_wk)
             if full:
                 ss.script_md = full
                 ss.script_msgs.append({"role": "assistant", "content": full})
