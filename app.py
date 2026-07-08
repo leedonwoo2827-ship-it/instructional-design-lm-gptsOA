@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 
 load_dotenv(encoding="utf-8-sig")  # 메모장 저장 .env 의 BOM 허용
 
+from core import db  # noqa: E402
 from core import llm as llm_mod  # noqa: E402
 from core import prompts  # noqa: E402
 from core import user_settings as settings_mod  # noqa: E402
@@ -38,8 +39,17 @@ st.set_page_config(
     page_title="교수설계 가이드 에이전트",
     page_icon="교",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
+
+
+@st.cache_resource
+def _init_db():
+    db.init_db()
+    return True
+
+
+_init_db()
 
 # 원본 HTML 의 브랜드 디자인 이식
 _CSS = """
@@ -125,6 +135,7 @@ REFINE_TMPL = (
 ss = st.session_state
 ss.setdefault("settings", settings_mod.load())
 ss.setdefault("step", 1)
+ss.setdefault("project_id", None)     # 현재 프로젝트(강의) DB id
 ss.setdefault("syllabus_md", "")
 ss.setdefault("syllabus_msgs", [])
 ss.setdefault("script_week", 1)
@@ -145,6 +156,41 @@ def ensure_ready() -> bool:
         st.warning("상단 '연결 설정'에서 API 키를 입력하고 저장하세요.")
         return False
     return True
+
+
+def clear_artifacts() -> None:
+    ss.form = {}
+    ss.syllabus_md, ss.syllabus_msgs = "", []
+    ss.script_doc_md, ss.script_ppt_md = "", ""
+    ss.script_doc_msgs, ss.script_ppt_msgs = [], []
+    ss.script_week, ss.step = 1, 1
+
+
+def load_project_into_session(pid: int) -> None:
+    p = db.load_project(pid)
+    if not p:
+        return
+    ss.project_id = p["id"]
+    ss.form = p["form"] or {}
+    ss.syllabus_md, ss.syllabus_msgs = p["syllabus_md"], p["syllabus_msgs"]
+    ss.script_week = p["script_week"] or 1
+    ss.script_doc_md, ss.script_doc_msgs = p["script_doc_md"], p["script_doc_msgs"]
+    ss.script_ppt_md, ss.script_ppt_msgs = p["script_ppt_md"], p["script_ppt_msgs"]
+
+
+def persist() -> None:
+    """현재 세션 산출물을 DB에 저장(프로젝트 없으면 과목명으로 자동 생성). 이름은 건드리지 않음."""
+    if not ss.project_id:
+        name = (ss.form.get("title") or "").strip() or "새 강의"
+        ss.project_id = db.create_project(name)
+    db.save_project(
+        ss.project_id,
+        form=ss.form,
+        syllabus_md=ss.syllabus_md, syllabus_msgs=ss.syllabus_msgs,
+        script_week=ss.script_week,
+        script_doc_md=ss.script_doc_md, script_doc_msgs=ss.script_doc_msgs,
+        script_ppt_md=ss.script_ppt_md, script_ppt_msgs=ss.script_ppt_msgs,
+    )
 
 
 def stream_into(placeholder, system: str, messages: list, label: str = "생성") -> str:
@@ -252,6 +298,49 @@ def run_pending(pending: dict, placeholder) -> None:
         if full:
             ss[md_key] = full
             ss[msgs_key].append({"role": "assistant", "content": full})
+
+
+# ---------------------------------------------------------------------------
+# 사이드바 — 강의 프로젝트 (저장/열기/이름변경/삭제)
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.markdown(f'<div class="ida-panel-title">{ICON_DOC}강의 프로젝트</div>', unsafe_allow_html=True)
+    _projects = db.list_projects()
+    _labels = ["＋ 새 프로젝트"] + [f'{p["name"]} · {p["updated_at"][5:16]}' for p in _projects]
+    _ids = [None] + [p["id"] for p in _projects]
+    _cur = _ids.index(ss.project_id) if ss.project_id in _ids else 0
+    _sel = st.selectbox("프로젝트 열기", range(len(_labels)), index=_cur,
+                        format_func=lambda i: _labels[i], label_visibility="collapsed")
+    if _ids[_sel] != ss.project_id:
+        if _ids[_sel] is None:
+            clear_artifacts()
+            ss.project_id = None
+        else:
+            load_project_into_session(_ids[_sel])
+        st.rerun()
+
+    if ss.project_id is None:
+        _nm = st.text_input("새 프로젝트 이름", value="", placeholder="예: 교육방법 및 교육공학")
+        if st.button("새로 만들기", use_container_width=True, type="primary"):
+            clear_artifacts()
+            ss.project_id = db.create_project(_nm.strip() or "새 강의")
+            st.rerun()
+    else:
+        _p = next((p for p in _projects if p["id"] == ss.project_id), None)
+        st.caption(f"현재 프로젝트: {_p['name'] if _p else '(저장 전)'}")
+        with st.expander("이름 변경 · 삭제"):
+            _rn = st.text_input("새 이름", value=(_p["name"] if _p else ""), key="rename_input")
+            rc1, rc2 = st.columns(2)
+            if rc1.button("이름 저장", use_container_width=True):
+                db.rename_project(ss.project_id, _rn.strip() or "새 강의")
+                st.rerun()
+            if rc2.button("삭제", use_container_width=True):
+                db.delete_project(ss.project_id)
+                ss.project_id = None
+                clear_artifacts()
+                st.rerun()
+    st.divider()
+    st.caption("산출물은 자동 저장됩니다 (data/app.db · 로컬, GitHub 미포함).")
 
 
 # ---------------------------------------------------------------------------
@@ -390,12 +479,14 @@ if ss.step == 3:
                 run_pending({"kind": "gen", "doc": "script_doc"}, doc_ph)
             with st.spinner(f"{ss.script_week}주차 PPT 개요 작성 중…"):
                 run_pending({"kind": "gen", "doc": "script_ppt"}, ppt_ph)
+            persist()
             st.rerun()
         elif pending and pdoc in ("script_doc", "script_ppt"):
             tph = doc_ph if pdoc == "script_doc" else ppt_ph
             _m = {"refine": "수정 반영 중…", "check": "정렬 점검 중…"}.get(pending["kind"], "작성 중…")
             with st.spinner(_m):
                 run_pending(pending, tph)
+            persist()
             st.rerun()
         else:
             for ph, ctrl, md_key, msgs_key, doc_key, hint in [
@@ -418,6 +509,18 @@ if ss.step == 3:
                         if rc[2].button("정렬 점검", key=f"chk_{doc_key}", use_container_width=True):
                             if ensure_ready():
                                 ss._pending = {"kind": "check", "doc": doc_key}
+                                st.rerun()
+                        with st.expander("직접 편집 (마크다운) — 박사님이 손수 수정"):
+                            _ed = st.text_area("직접 편집", value=ss[md_key], height=380,
+                                               key=f"edit_{doc_key}", label_visibility="collapsed")
+                            if st.button("편집 저장", key=f"savedit_{doc_key}", use_container_width=True):
+                                ss[md_key] = _ed
+                                ss[msgs_key] = [
+                                    {"role": "user", "content": "현재 문서(직접 편집본)를 기준으로 이어서 작업합니다."},
+                                    {"role": "assistant", "content": _ed},
+                                ]
+                                persist()
+                                st.success("편집 내용을 저장했습니다.")
                                 st.rerun()
                 else:
                     ph.info(hint)
@@ -505,6 +608,7 @@ else:
                     else "강의계획서 작성 중… (목표 설계 → 주차 분해 → 정렬 매트릭스)")
                 with st.spinner(_m):
                     run_pending(pending, out_ph)
+                persist()
                 st.rerun()
             elif ss.syllabus_md:
                 out_ph.markdown(ss.syllabus_md)
@@ -520,4 +624,16 @@ else:
                     if req.strip() and ensure_ready():
                         ss.syllabus_msgs.append({"role": "user", "content": REFINE_TMPL.format(req=req)})
                         ss._pending = {"kind": "refine", "doc": "syllabus"}
+                        st.rerun()
+                with st.expander("직접 편집 (마크다운) — 박사님이 손수 수정"):
+                    _ed = st.text_area("강의계획서 직접 편집", value=ss.syllabus_md, height=420,
+                                       key="edit_syllabus", label_visibility="collapsed")
+                    if st.button("편집 저장", key="savedit_syllabus", use_container_width=True):
+                        ss.syllabus_md = _ed
+                        ss.syllabus_msgs = [
+                            {"role": "user", "content": "현재 강의계획서(직접 편집본)를 기준으로 이어서 작업합니다."},
+                            {"role": "assistant", "content": _ed},
+                        ]
+                        persist()
+                        st.success("편집 내용을 저장했습니다.")
                         st.rerun()

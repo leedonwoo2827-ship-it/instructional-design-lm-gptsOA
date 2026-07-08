@@ -5,6 +5,9 @@ __pycache__/
 venv/
 .env
 data/user_settings.json
+data/app.db
+data/app.db-wal
+data/app.db-shm
 .streamlit/secrets.toml
 .DS_Store
 *.egg-info/
