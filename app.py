@@ -141,6 +141,9 @@ REFINE_TMPL = (
     "수정 시에도 학습목표 정렬 원칙(측정 가능 동사, 목표–평가–활동 인지수준 일치)을 유지하세요.\n\n요청: {req}"
 )
 
+# 교재/PPT(장문·다수 슬라이드)는 넉넉한 토큰으로 생성(추론 모델 잘림 방지). 설정값보다 크면 그 값 사용.
+GEN_MAX_TOKENS = 16000
+
 
 # ---------------------------------------------------------------------------
 # 세션 상태
@@ -206,16 +209,18 @@ def persist() -> None:
     )
 
 
-def stream_into(placeholder, system: str, messages: list, label: str = "생성") -> str:
+def stream_into(placeholder, system: str, messages: list, label: str = "생성",
+                max_tokens: int = None) -> str:
     provider = llm_mod.build_provider(ss.settings)
+    mt = max(max_tokens or 0, ss.settings.max_tokens)
     full = ""
     placeholder.markdown("**작성 중…** 잠시만 기다려 주세요. 내용이 이 영역에 실시간으로 나타납니다. ▌")
     t0 = time.time()
     last = 0
-    print(f"[{label}] 시작 · 모델={ss.settings.model}", flush=True)
+    print(f"[{label}] 시작 · 모델={ss.settings.model} · max_tokens={mt}", flush=True)
     try:
         for delta in provider.stream(system, messages,
-                                     max_tokens=ss.settings.max_tokens,
+                                     max_tokens=mt,
                                      temperature=ss.settings.temperature):
             full += delta
             placeholder.markdown(full + " ▌")
@@ -260,12 +265,24 @@ def syllabus_user_msg(f: dict) -> str:
     )
 
 
+def session_hours() -> int:
+    try:
+        return int(ss.form.get("hours", 2) or 2)
+    except (TypeError, ValueError):
+        return 2
+
+
 def script_user_msg(week: int, fmt: str, note: str, syllabus_md: str) -> str:
     kind = "학생용 교재(읽기 자료)" if fmt == "doc" else "PPT 슬라이드 개요"
     extra = f"\n[교수자 추가 요청] {note}\n" if note.strip() else ""
+    vol = ""
+    if fmt == "ppt":
+        h = session_hours()
+        vol = (f"\n이 차시는 약 {h}시간 수업입니다. 슬라이드는 1시간당 약 15장 기준, "
+               f"표지 제외 본문 약 {h * 15}장으로 작성하세요.")
     return (
         f"아래는 확정된 강의계획서입니다. 이 계획서의 {week}주차에 대한 {kind}를 작성해 주세요. "
-        f"반드시 계획서의 해당 주차 목표와 강좌 목표(G#)를 상속하세요.{extra}\n"
+        f"반드시 계획서의 해당 주차 목표와 강좌 목표(G#)를 상속하세요.{extra}{vol}\n"
         f"=== 강의계획서 ===\n{syllabus_md}"
     )
 
@@ -307,7 +324,7 @@ def run_pending(pending: dict, placeholder) -> None:
         if rep:
             ss[md_key] = cur + f"\n\n---\n\n## 정렬 점검 보고\n\n{rep}"
     else:  # gen | refine
-        full = stream_into(placeholder, sys_gen, ss[msgs_key], label=wk)
+        full = stream_into(placeholder, sys_gen, ss[msgs_key], label=wk, max_tokens=GEN_MAX_TOKENS)
         if full:
             ss[md_key] = full
             ss[msgs_key].append({"role": "assistant", "content": full})
@@ -426,6 +443,9 @@ with st.sidebar:
             f_mode = fc[1].selectbox("강의 방식", MODE_CHOICES,
                                      index=MODE_CHOICES.index(ss.form.get("mode", "대면"))
                                      if ss.form.get("mode", "대면") in MODE_CHOICES else 0)
+            f_hours = st.number_input("차시 수업 시간(시간) — 슬라이드는 시간당 약 15장",
+                                      min_value=1, max_value=6, step=1,
+                                      value=int(ss.form.get("hours", 2) or 2))
             f_topics = st.text_area("주요 내용 · 주제 *", value=ss.form.get("topics", ""),
                                     placeholder="예: 교수설계 이론, ADDIE 모형, 학습목표 설계, 매체 활용 등")
             fc = st.columns(2)
@@ -439,7 +459,8 @@ with st.sidebar:
                 st.warning("과목명과 주요 내용은 필수입니다.")
             elif ensure_ready():
                 ss.form = dict(title=f_title, field=f_field, target=f_target, credit=f_credit,
-                               weeks=f_weeks, mode=f_mode, topics=f_topics, learner=f_learner, policy=f_policy)
+                               weeks=f_weeks, mode=f_mode, hours=f_hours,
+                               topics=f_topics, learner=f_learner, policy=f_policy)
                 ss.syllabus_msgs = [{"role": "user", "content": syllabus_user_msg(ss.form)}]
                 ss.step = 2
                 ss._pending = {"kind": "gen", "doc": "syllabus"}
@@ -565,7 +586,7 @@ if ss.step == 3:
                 # 분량 지표 (대학강의 분량 판별용 · 참고 목표는 잠정)
                 if is_ppt:
                     n_slides = len(re.findall(r"(?m)^\s*#{2,3}\s*슬라이드", cur))
-                    st.caption(f"슬라이드 {n_slides}장 · {len(cur):,}자  ·  참고 목표 20~30장")
+                    st.caption(f"슬라이드 {n_slides}장 · {len(cur):,}자  ·  목표 약 {session_hours() * 15}장({session_hours()}시간)")
                 else:
                     st.caption(f"교재 {len(cur):,}자 · 약 {len(cur) / 1800:.1f}쪽(A4)  ·  참고 목표 7쪽↑")
             return st.empty(), st.container()
