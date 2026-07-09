@@ -626,30 +626,24 @@ elif ss.step == 1:
     render_syllabus_panel()
 
 # ===========================================================================
-# STEP 2 — 좌측 설계 기준 / 우측 강의계획서
+# STEP 2 — 상단 컨트롤 + 전체 폭 강의계획서
 # ===========================================================================
 else:
-    left, right = st.columns([0.37, 0.63], gap="large")
-    with left:
-        with st.container(border=True):
-            st.markdown(f'<div class="ida-panel-title">{ICON_INFO}강의계획서 점검 · STEP 2</div>', unsafe_allow_html=True)
-            st.markdown(
-                "실무형 강의계획서 기준으로 점검합니다.\n"
-                "- **학습목표** 3~4개 · 학습자 관점\n"
-                "- **평가·출석 규정**(학칙) 명시\n"
-                "- **주교재 표**(저자–출판사–교재명–발행년도)\n"
-                "- **주별 세부 수업계획**(주차·주제)\n"
-                "- **과제 표** 포함"
-            )
-            if st.button("정렬 점검 실행", use_container_width=True):
-                if ss.syllabus_md and ensure_ready():
-                    ss._pending = {"kind": "check", "doc": "syllabus"}
-                    st.rerun()
-                elif not ss.syllabus_md:
-                    st.warning("먼저 강의계획서를 생성하세요.")
-            if st.button("산출물(교재·PPT) 작성으로 이동 →", type="primary", use_container_width=True,
-                         disabled=not ss.syllabus_md):
-                ss.step = 3
+    with st.container(border=True):
+        st.markdown(f'<div class="ida-panel-title">{ICON_INFO}강의계획서 점검 · STEP 2</div>', unsafe_allow_html=True)
+        st.caption("‘정렬 점검’은 생성된 강의계획서가 실무형 기준(섹션 구성·학습목표 3~4개·평가/출석 규정·주교재 서지·주별·과제)을 "
+                   "지키는지 AI가 감사해 ✅/⚠️/❌ 수정 제안을 문서 하단에 덧붙입니다. (맞춤법 교정이 아니라 구성·정렬 검토)")
+        _checked = "정렬 점검 보고" in (ss.syllabus_md or "")  # 점검 완료 시 강조를 ②로 이동
+        bc = st.columns([1.8, 2.6, 3.2])
+        if bc[0].button("① 정렬 점검 실행", use_container_width=True,
+                        type=("secondary" if _checked else "primary")):
+            if ss.syllabus_md and ensure_ready():
+                ss._pending = {"kind": "check", "doc": "syllabus"}
                 st.rerun()
-    with right:
-        render_syllabus_panel()
+            elif not ss.syllabus_md:
+                st.warning("먼저 강의계획서를 생성하세요.")
+        if bc[1].button("② 산출물(교재·PPT) 작성으로 이동 →", use_container_width=True,
+                        type=("primary" if _checked else "secondary"), disabled=not ss.syllabus_md):
+            ss.step = 3
+            st.rerun()
+    render_syllabus_panel()
