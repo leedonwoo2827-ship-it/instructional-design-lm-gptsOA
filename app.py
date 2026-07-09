@@ -65,7 +65,9 @@ _CSS = """
 html,body,.stApp,[class*="css"]{font-family:'Pretendard',-apple-system,'Malgun Gothic',sans-serif;}
 .stApp{background:var(--bg);}
 [data-testid="stHeader"]{background:transparent;}
-[data-testid="stSidebar"]{min-width:340px;max-width:360px;}
+/* 사이드바 넓게 — 접힘(aria-expanded=false) 시 완전히 숨겨 삐짐 방지 */
+[data-testid="stSidebar"]{min-width:460px;max-width:460px;}
+[data-testid="stSidebar"][aria-expanded="false"]{min-width:460px;max-width:460px;margin-left:-460px;}
 .block-container{max-width:1240px;padding-top:1rem;padding-bottom:4rem;}
 
 /* 헤더 — 밝은 에디토리얼(그라데이션 로고 제거) */
@@ -405,25 +407,29 @@ with st.sidebar:
                 st.rerun()
     st.divider()
 
-    # ── 강의 기본 정보 (입력) ──
+    # ── 강의 기본 정보 (입력) — 2열 배치 ──
     with st.expander("강의 기본 정보", expanded=not ss.syllabus_md):
         with st.form("lecture_form"):
-            f_title = st.text_input("과목명 *", value=ss.form.get("title", ""), placeholder="예: 교육공학의 이해")
-            f_field = st.text_input("학문 분야", value=ss.form.get("field", ""), placeholder="예: 교육학")
-            f_target = st.text_input("수강 대상 *", value=ss.form.get("target", ""), placeholder="예: 학부 2학년")
-            f_credit = st.text_input("학점 / 시수", value=ss.form.get("credit", ""), placeholder="예: 3학점, 주 3시간")
-            f_weeks = st.selectbox("총 주차", WEEK_CHOICES,
-                                   index=WEEK_CHOICES.index(ss.form.get("weeks", 15))
-                                   if ss.form.get("weeks", 15) in WEEK_CHOICES else 3)
-            f_mode = st.selectbox("강의 방식", MODE_CHOICES,
-                                  index=MODE_CHOICES.index(ss.form.get("mode", "대면"))
-                                  if ss.form.get("mode", "대면") in MODE_CHOICES else 0)
+            fc = st.columns(2)
+            f_title = fc[0].text_input("과목명 *", value=ss.form.get("title", ""), placeholder="예: 교육공학의 이해")
+            f_field = fc[1].text_input("학문 분야", value=ss.form.get("field", ""), placeholder="예: 교육학")
+            fc = st.columns(2)
+            f_target = fc[0].text_input("수강 대상 *", value=ss.form.get("target", ""), placeholder="예: 학부 2학년")
+            f_credit = fc[1].text_input("학점 / 시수", value=ss.form.get("credit", ""), placeholder="예: 3학점, 주 3시간")
+            fc = st.columns(2)
+            f_weeks = fc[0].selectbox("총 주차", WEEK_CHOICES,
+                                      index=WEEK_CHOICES.index(ss.form.get("weeks", 15))
+                                      if ss.form.get("weeks", 15) in WEEK_CHOICES else 3)
+            f_mode = fc[1].selectbox("강의 방식", MODE_CHOICES,
+                                     index=MODE_CHOICES.index(ss.form.get("mode", "대면"))
+                                     if ss.form.get("mode", "대면") in MODE_CHOICES else 0)
             f_topics = st.text_area("주요 내용 · 주제 *", value=ss.form.get("topics", ""),
                                     placeholder="예: 교수설계 이론, ADDIE 모형, 학습목표 설계, 매체 활용 등")
-            f_learner = st.text_input("수강생 특성", value=ss.form.get("learner", ""),
-                                      placeholder="예: 전공 기초 이수, 일부 현직 교사")
-            f_policy = st.text_area("평가 선호·수업 철학 (선택)", value=ss.form.get("policy", ""),
-                                    placeholder="예: 과정 중심 평가 40%, 토론 중심 운영")
+            fc = st.columns(2)
+            f_learner = fc[0].text_input("수강생 특성", value=ss.form.get("learner", ""),
+                                         placeholder="예: 전공 기초 이수, 일부 현직 교사")
+            f_policy = fc[1].text_input("평가 선호·수업 철학", value=ss.form.get("policy", ""),
+                                        placeholder="예: 과정 중심 40%, 토론 중심")
             submitted = st.form_submit_button("강의계획서 생성 →", type="primary", use_container_width=True)
         if submitted:
             if not f_title.strip() or not f_topics.strip():
