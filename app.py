@@ -65,6 +65,7 @@ _CSS = """
 html,body,.stApp,[class*="css"]{font-family:'Pretendard',-apple-system,'Malgun Gothic',sans-serif;}
 .stApp{background:var(--bg);}
 [data-testid="stHeader"]{background:transparent;}
+[data-testid="stSidebar"]{min-width:340px;max-width:360px;}
 .block-container{max-width:1240px;padding-top:1rem;padding-bottom:4rem;}
 
 /* 헤더 — 밝은 에디토리얼(그라데이션 로고 제거) */
@@ -309,8 +310,62 @@ def run_pending(pending: dict, placeholder) -> None:
             ss[msgs_key].append({"role": "assistant", "content": full})
 
 
+def render_syllabus_panel() -> None:
+    """강의계획서 출력 패널(다운로드·차트·스트리밍·수정·직접편집). STEP1/2 공용."""
+    with st.container(border=True):
+        hc = st.columns([3, 1.1, 1.5])
+        hc[0].markdown(f'<div class="ida-panel-title">{ICON_DOC}강의계획서</div>', unsafe_allow_html=True)
+        if ss.syllabus_md:
+            hc[1].download_button("MD", ss.syllabus_md, file_name=out_name("syllabus") + ".md",
+                                  mime="text/markdown", use_container_width=True, key="dl_syl_md")
+            hc[2].download_button("DOC 저장", md_to_doc_bytes(ss.syllabus_md),
+                                  file_name=out_name("syllabus") + ".doc",
+                                  mime="application/msword", use_container_width=True, key="dl_syl_doc")
+        if ss.syllabus_md and not pending:
+            _chart = bloom_chart_html(bloom_counts(ss.syllabus_md))
+            if _chart:
+                st.markdown(_chart, unsafe_allow_html=True)
+
+        out_ph = st.empty()
+        if pending and pending.get("doc") == "syllabus":
+            _m = "수정 반영 중…" if pending["kind"] == "refine" else (
+                "정렬 점검 중… (Bloom 분포 · 목표–평가 정렬)" if pending["kind"] == "check"
+                else "강의계획서 작성 중… (목표 설계 → 주차 분해 → 정렬 매트릭스)")
+            with st.spinner(_m):
+                run_pending(pending, out_ph)
+            persist()
+            st.rerun()
+        elif ss.syllabus_md:
+            out_ph.markdown(ss.syllabus_md)
+        else:
+            out_ph.info("좌측 사이드바 '강의 기본 정보'를 입력하고 강의계획서를 생성하세요.")
+
+        if ss.syllabus_md and not pending:
+            st.divider()
+            rc = st.columns([4, 1])
+            req = rc[0].text_input("수정 요청", key="refine_syllabus", label_visibility="collapsed",
+                                   placeholder="수정 요청 — 예: 7주차 목표를 '분석' 수준으로 높여줘")
+            if rc[1].button("수정 요청", key="refbtn_syllabus", use_container_width=True):
+                if req.strip() and ensure_ready():
+                    ss.syllabus_msgs.append({"role": "user", "content": REFINE_TMPL.format(req=req)})
+                    ss._pending = {"kind": "refine", "doc": "syllabus"}
+                    st.rerun()
+            with st.expander("직접 편집 (마크다운) — 박사님이 손수 수정"):
+                _ed = st.text_area("강의계획서 직접 편집", value=ss.syllabus_md, height=420,
+                                   key="edit_syllabus", label_visibility="collapsed")
+                if st.button("편집 저장", key="savedit_syllabus", use_container_width=True):
+                    ss.syllabus_md = _ed
+                    ss.syllabus_msgs = [
+                        {"role": "user", "content": "현재 강의계획서(직접 편집본)를 기준으로 이어서 작업합니다."},
+                        {"role": "assistant", "content": _ed},
+                    ]
+                    persist()
+                    st.success("편집 내용을 저장했습니다.")
+                    st.rerun()
+
+
 # ---------------------------------------------------------------------------
-# 사이드바 — 강의 프로젝트 (저장/열기/이름변경/삭제)
+# 사이드바 — 강의 프로젝트 · 강의 기본 정보 · 연결 설정
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.markdown(f'<div class="ida-panel-title">{ICON_DOC}강의 프로젝트</div>', unsafe_allow_html=True)
@@ -349,11 +404,65 @@ with st.sidebar:
                 clear_artifacts()
                 st.rerun()
     st.divider()
+
+    # ── 강의 기본 정보 (입력) ──
+    with st.expander("강의 기본 정보", expanded=not ss.syllabus_md):
+        with st.form("lecture_form"):
+            f_title = st.text_input("과목명 *", value=ss.form.get("title", ""), placeholder="예: 교육공학의 이해")
+            f_field = st.text_input("학문 분야", value=ss.form.get("field", ""), placeholder="예: 교육학")
+            f_target = st.text_input("수강 대상 *", value=ss.form.get("target", ""), placeholder="예: 학부 2학년")
+            f_credit = st.text_input("학점 / 시수", value=ss.form.get("credit", ""), placeholder="예: 3학점, 주 3시간")
+            f_weeks = st.selectbox("총 주차", WEEK_CHOICES,
+                                   index=WEEK_CHOICES.index(ss.form.get("weeks", 15))
+                                   if ss.form.get("weeks", 15) in WEEK_CHOICES else 3)
+            f_mode = st.selectbox("강의 방식", MODE_CHOICES,
+                                  index=MODE_CHOICES.index(ss.form.get("mode", "대면"))
+                                  if ss.form.get("mode", "대면") in MODE_CHOICES else 0)
+            f_topics = st.text_area("주요 내용 · 주제 *", value=ss.form.get("topics", ""),
+                                    placeholder="예: 교수설계 이론, ADDIE 모형, 학습목표 설계, 매체 활용 등")
+            f_learner = st.text_input("수강생 특성", value=ss.form.get("learner", ""),
+                                      placeholder="예: 전공 기초 이수, 일부 현직 교사")
+            f_policy = st.text_area("평가 선호·수업 철학 (선택)", value=ss.form.get("policy", ""),
+                                    placeholder="예: 과정 중심 평가 40%, 토론 중심 운영")
+            submitted = st.form_submit_button("강의계획서 생성 →", type="primary", use_container_width=True)
+        if submitted:
+            if not f_title.strip() or not f_topics.strip():
+                st.warning("과목명과 주요 내용은 필수입니다.")
+            elif ensure_ready():
+                ss.form = dict(title=f_title, field=f_field, target=f_target, credit=f_credit,
+                               weeks=f_weeks, mode=f_mode, topics=f_topics, learner=f_learner, policy=f_policy)
+                ss.syllabus_msgs = [{"role": "user", "content": syllabus_user_msg(ss.form)}]
+                ss.step = 2
+                ss._pending = {"kind": "gen", "doc": "syllabus"}
+                st.rerun()
+
+    # ── 연결 설정 ──
+    _key_ok = bool((ss.settings.api_key or "").strip())
+    with st.expander(f"연결 설정 — {'연결됨 ✓' if _key_ok else 'API 키 입력'}", expanded=not ss.had_key):
+        s = ss.settings
+        s.base_url = st.text_input("LiteLLM URL", value=s.base_url)
+        s.api_key = st.text_input("API 키", value=s.api_key, type="password",
+                                  help="사내 대시보드(/ui/)에서 발급한 sk- 키")
+        _mids = list(settings_mod.MODELS.keys())
+        s.model = st.selectbox("모델", _mids, index=_mids.index(s.model) if s.model in _mids else 0,
+                               format_func=lambda m: settings_mod.MODELS[m])
+        bc1, bc2 = st.columns(2)
+        if bc1.button("연결 테스트", use_container_width=True):
+            with st.spinner("확인 중…"):
+                ss.ping_status = llm_mod.build_provider(s).ping()
+        if bc2.button("저장", use_container_width=True, type="primary"):
+            settings_mod.save(s)
+            ss.had_key = bool((s.api_key or "").strip())
+            st.rerun()
+        if ss.ping_status:
+            ok, msg = ss.ping_status
+            (st.success if ok else st.error)(msg)
+
     st.caption("산출물은 자동 저장됩니다 (data/app.db · 로컬, GitHub 미포함).")
 
 
 # ---------------------------------------------------------------------------
-# 헤더 (원본 HTML 디자인)
+# 헤더
 # ---------------------------------------------------------------------------
 st.markdown(
     '<div class="ida-header">'
@@ -363,36 +472,6 @@ st.markdown(
     '</div>',
     unsafe_allow_html=True,
 )
-
-# ---------------------------------------------------------------------------
-# 연결 설정 — 접기/펴기
-# ---------------------------------------------------------------------------
-_key_ok = bool((ss.settings.api_key or "").strip())
-_status = "연결 준비됨 ✓" if _key_ok else "API 키를 입력하세요"
-with st.expander(f"연결 설정 — {_status}", expanded=not ss.had_key):
-    s = ss.settings
-    c = st.columns([2, 2, 1.4])
-    s.base_url = c[0].text_input("LiteLLM URL", value=s.base_url, help="사내 프록시 주소")
-    s.api_key = c[1].text_input("API 키", value=s.api_key, type="password",
-                                help="사내 대시보드(/ui/)에서 발급한 sk- 키")
-    model_ids = list(settings_mod.MODELS.keys())
-    s.model = c[2].selectbox("모델", model_ids,
-                             index=model_ids.index(s.model) if s.model in model_ids else 0,
-                             format_func=lambda m: settings_mod.MODELS[m])
-    b1, b2, _ = st.columns([1, 1, 3])
-    if b1.button("연결 테스트", use_container_width=True):
-        with st.spinner("확인 중…"):
-            ss.ping_status = llm_mod.build_provider(s).ping()
-    if b2.button("저장", use_container_width=True, type="primary"):
-        settings_mod.save(s)
-        ss.had_key = bool((s.api_key or "").strip())
-        st.success("저장되었습니다.")
-        st.rerun()
-    if ss.ping_status:
-        ok, msg = ss.ping_status
-        (st.success if ok else st.error)(msg)
-    st.caption("URL·키는 data/user_settings.json 에 저장되며 GitHub 에 올라가지 않습니다.")
-
 
 # ---------------------------------------------------------------------------
 # STEP 바
@@ -535,114 +614,36 @@ if ss.step == 3:
                     ph.info(hint)
 
 # ===========================================================================
-# STEP 1·2 — 좌측 입력 / 우측 강의계획서
+# STEP 1 — 강의계획서 전체 폭 (입력은 사이드바)
+# ===========================================================================
+elif ss.step == 1:
+    render_syllabus_panel()
+
+# ===========================================================================
+# STEP 2 — 좌측 설계 기준 / 우측 강의계획서
 # ===========================================================================
 else:
     left, right = st.columns([0.37, 0.63], gap="large")
     with left:
         with st.container(border=True):
-            if ss.step == 1:
-                st.markdown(f'<div class="ida-panel-title">{ICON_INFO}강의 기본 정보 · STEP 1</div>', unsafe_allow_html=True)
-                with st.form("lecture_form"):
-                    cc = st.columns(2)
-                    title = cc[0].text_input("과목명 *", value=ss.form.get("title", ""), placeholder="예: 교육공학의 이해")
-                    field = cc[1].text_input("학문 분야", value=ss.form.get("field", ""), placeholder="예: 교육학")
-                    cc = st.columns(2)
-                    target = cc[0].text_input("수강 대상 *", value=ss.form.get("target", ""), placeholder="예: 학부 2학년")
-                    credit = cc[1].text_input("학점 / 시수", value=ss.form.get("credit", ""), placeholder="예: 3학점, 주 3시간")
-                    cc = st.columns(2)
-                    weeks = cc[0].selectbox("총 주차", WEEK_CHOICES,
-                                            index=WEEK_CHOICES.index(ss.form.get("weeks", 15))
-                                            if ss.form.get("weeks", 15) in WEEK_CHOICES else 3)
-                    mode = cc[1].selectbox("강의 방식", MODE_CHOICES,
-                                           index=MODE_CHOICES.index(ss.form.get("mode", "대면"))
-                                           if ss.form.get("mode", "대면") in MODE_CHOICES else 0)
-                    topics = st.text_area("주요 내용 · 다루고 싶은 주제 *", value=ss.form.get("topics", ""),
-                                          placeholder="예: 교수설계 이론, ADDIE 모형, 학습목표 설계, 매체 활용 등")
-                    learner = st.text_input("수강생 특성 (선수지식 · 이질성 등)", value=ss.form.get("learner", ""),
-                                            placeholder="예: 전공 기초 이수, 일부 현직 교사 포함")
-                    policy = st.text_area("평가 선호 · 수업 철학 (선택)", value=ss.form.get("policy", ""),
-                                          placeholder="예: 과정 중심 평가 40%, 토론 중심 운영, 생성형 AI 조건부 허용")
-                    st.caption("입력 정보는 학습자 도달점 중심(ABCD)으로 학습목표를 설계하고 목표–주차–평가를 정렬하는 데 쓰입니다.")
-                    submitted = st.form_submit_button("강의계획서 생성 →", type="primary", use_container_width=True)
-                if submitted:
-                    if not title.strip() or not topics.strip():
-                        st.warning("과목명과 주요 내용은 필수 입력입니다.")
-                    elif ensure_ready():
-                        ss.form = dict(title=title, field=field, target=target, credit=credit,
-                                       weeks=weeks, mode=mode, topics=topics, learner=learner, policy=policy)
-                        ss.syllabus_msgs = [{"role": "user", "content": syllabus_user_msg(ss.form)}]
-                        ss.step = 2
-                        ss._pending = {"kind": "gen", "doc": "syllabus"}
-                        st.rerun()
-            else:  # STEP 2
-                st.markdown(f'<div class="ida-panel-title">{ICON_INFO}강의계획서 설계 기준 · STEP 2</div>', unsafe_allow_html=True)
-                st.markdown(
-                    "- **측정 가능한 학습목표** — ABCD 모델, Bloom 개정분류 동사. 한 목표 한 동사.\n"
-                    "- **목표 분해** — 강좌 목표를 주차(모듈) 목표로 분해.\n"
-                    "- **정렬 매트릭스** — 주차·평가가 어느 강좌 목표를 지지하는지 추적.\n"
-                    "- **인지수준 분포** — 상·하위 수준 쏠림 점검.\n"
-                    "- **어조·근거** — 통상과 다른 운영은 근거 명시."
-                )
-                if st.button("정렬 · 인지수준 점검", use_container_width=True):
-                    if ss.syllabus_md and ensure_ready():
-                        ss._pending = {"kind": "check", "doc": "syllabus"}
-                        st.rerun()
-                    elif not ss.syllabus_md:
-                        st.warning("먼저 강의계획서를 생성하세요.")
-                if st.button("산출물(교재·PPT) 작성으로 이동 →", type="primary", use_container_width=True,
-                             disabled=not ss.syllabus_md):
-                    ss.step = 3
+            st.markdown(f'<div class="ida-panel-title">{ICON_INFO}강의계획서 점검 · STEP 2</div>', unsafe_allow_html=True)
+            st.markdown(
+                "실무형 강의계획서 기준으로 점검합니다.\n"
+                "- **학습목표** 3~4개 · 학습자 관점\n"
+                "- **평가·출석 규정**(학칙) 명시\n"
+                "- **주교재 표**(저자–출판사–교재명–발행년도)\n"
+                "- **주별 세부 수업계획**(주차·주제)\n"
+                "- **과제 표** 포함"
+            )
+            if st.button("정렬 점검 실행", use_container_width=True):
+                if ss.syllabus_md and ensure_ready():
+                    ss._pending = {"kind": "check", "doc": "syllabus"}
                     st.rerun()
-
-    with right:
-        with st.container(border=True):
-            hc = st.columns([3, 1.1, 1.5])
-            hc[0].markdown(f'<div class="ida-panel-title">{ICON_DOC}강의계획서</div>', unsafe_allow_html=True)
-            if ss.syllabus_md:
-                hc[1].download_button("MD", ss.syllabus_md, file_name=out_name("syllabus") + ".md",
-                                      mime="text/markdown", use_container_width=True)
-                hc[2].download_button("DOC 저장", md_to_doc_bytes(ss.syllabus_md),
-                                      file_name=out_name("syllabus") + ".doc",
-                                      mime="application/msword", use_container_width=True)
-            if ss.syllabus_md and not pending:
-                _chart = bloom_chart_html(bloom_counts(ss.syllabus_md))
-                if _chart:
-                    st.markdown(_chart, unsafe_allow_html=True)
-
-            out_ph = st.empty()
-            if pending and pending.get("doc") == "syllabus":
-                _m = "수정 반영 중…" if pending["kind"] == "refine" else (
-                    "정렬 점검 중… (Bloom 분포 · 목표–평가 정렬)" if pending["kind"] == "check"
-                    else "강의계획서 작성 중… (목표 설계 → 주차 분해 → 정렬 매트릭스)")
-                with st.spinner(_m):
-                    run_pending(pending, out_ph)
-                persist()
+                elif not ss.syllabus_md:
+                    st.warning("먼저 강의계획서를 생성하세요.")
+            if st.button("산출물(교재·PPT) 작성으로 이동 →", type="primary", use_container_width=True,
+                         disabled=not ss.syllabus_md):
+                ss.step = 3
                 st.rerun()
-            elif ss.syllabus_md:
-                out_ph.markdown(ss.syllabus_md)
-            else:
-                out_ph.info("좌측에서 강의 정보를 입력하고 강의계획서를 생성하세요.")
-
-            if ss.syllabus_md and not pending:
-                st.divider()
-                rc = st.columns([4, 1])
-                req = rc[0].text_input("수정 요청", key="refine_syllabus", label_visibility="collapsed",
-                                       placeholder="수정 요청 — 예: 7주차 목표를 '분석' 수준으로 높여줘")
-                if rc[1].button("수정 요청", key="refbtn_syllabus", use_container_width=True):
-                    if req.strip() and ensure_ready():
-                        ss.syllabus_msgs.append({"role": "user", "content": REFINE_TMPL.format(req=req)})
-                        ss._pending = {"kind": "refine", "doc": "syllabus"}
-                        st.rerun()
-                with st.expander("직접 편집 (마크다운) — 박사님이 손수 수정"):
-                    _ed = st.text_area("강의계획서 직접 편집", value=ss.syllabus_md, height=420,
-                                       key="edit_syllabus", label_visibility="collapsed")
-                    if st.button("편집 저장", key="savedit_syllabus", use_container_width=True):
-                        ss.syllabus_md = _ed
-                        ss.syllabus_msgs = [
-                            {"role": "user", "content": "현재 강의계획서(직접 편집본)를 기준으로 이어서 작업합니다."},
-                            {"role": "assistant", "content": _ed},
-                        ]
-                        persist()
-                        st.success("편집 내용을 저장했습니다.")
-                        st.rerun()
+    with right:
+        render_syllabus_panel()
