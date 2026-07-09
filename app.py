@@ -481,7 +481,7 @@ with st.sidebar:
             f_mode = fc[1].selectbox("강의 방식", MODE_CHOICES,
                                      index=MODE_CHOICES.index(ss.form.get("mode", "대면"))
                                      if ss.form.get("mode", "대면") in MODE_CHOICES else 0)
-            f_hours = st.number_input("차시 수업 시간(시간) — 슬라이드는 시간당 약 15장",
+            f_hours = st.number_input(f"차시 수업 시간(시간) — 슬라이드는 시간당 약 {SLIDES_PER_HOUR}장",
                                       min_value=1, max_value=6, step=1,
                                       value=int(ss.form.get("hours", 2) or 2))
             f_topics = st.text_area("주요 내용 · 주제 *", value=ss.form.get("topics", ""),
