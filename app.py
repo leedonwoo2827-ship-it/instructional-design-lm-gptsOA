@@ -701,16 +701,19 @@ else:
         st.markdown(f'<div class="ida-panel-title">{ICON_INFO}강의계획서 점검 · STEP 2</div>', unsafe_allow_html=True)
         st.caption("① 정렬 점검: 강의계획서가 실무형 기준을 지켰는지 AI가 검토해 수정 제안을 문서 하단에 덧붙입니다.")
         _checked = "정렬 점검 보고" in (ss.syllabus_md or "")  # 점검 완료 시 강조를 ②로 이동
+        _busy = bool(pending)  # 생성/점검/수정 진행 중이면 버튼 비활성화
         bc = st.columns([1.8, 2.6, 3.2])
         if bc[0].button("① 정렬 점검 실행", use_container_width=True,
-                        type=("secondary" if _checked else "primary")):
+                        type=("secondary" if _checked else "primary"),
+                        disabled=_busy or not ss.syllabus_md):
             if ss.syllabus_md and ensure_ready():
                 ss._pending = {"kind": "check", "doc": "syllabus"}
                 st.rerun()
             elif not ss.syllabus_md:
                 st.warning("먼저 강의계획서를 생성하세요.")
         if bc[1].button("② 산출물(교재·PPT) 작성으로 이동 →", use_container_width=True,
-                        type=("primary" if _checked else "secondary"), disabled=not ss.syllabus_md):
+                        type=("primary" if _checked else "secondary"),
+                        disabled=_busy or not ss.syllabus_md):
             ss.step = 3
             st.rerun()
     render_syllabus_panel()
