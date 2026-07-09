@@ -16,7 +16,7 @@ from pathlib import Path
 SETTINGS_PATH = Path(__file__).resolve().parent.parent / "data" / "user_settings.json"
 
 DEFAULT_BASE_URL = "http://192.168.50.119:4000"
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "deepseek-v4-flash-think"
 
 # 선택 가능한 모델 (id -> 표시 라벨). MIGRATION.md 매핑 기준.
 MODELS: dict[str, str] = {
