@@ -51,67 +51,76 @@ def _init_db():
 
 _init_db()
 
-# 원본 HTML 의 브랜드 디자인 이식
+# 밝은 에디토리얼 디자인 (Figma design.md 기반: 흰 캔버스·헤어라인·알약 버튼·파스텔·그림자 최소)
 _CSS = """
 <style>
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
-:root{--brand:#3b4ec8;--brand2:#2c3aa0;--brand-soft:#eef0fb;--accent:#0ea5a4;
-  --line:#e4e6ea;--ink:#1a1d23;--ink2:#5b6472;--bg:#f4f5f7;
-  --ok:#0e9f6e;--warn:#b45309;--err:#cc4117;}
+:root{
+  --canvas:#ffffff; --bg:#fbfbfd; --ink:#141518; --ink2:#5b6472;
+  --line:#ececee; --line-soft:#f2f2f4;
+  --brand:#3b4ec8; --brand2:#2c3aa0; --brand-soft:#eef0fb;
+  --lilac:#efeaff; --lime:#eef6dd; --cream:#fbf3e6; --mint:#e6f6ef;
+  --ok:#0e9f6e; --warn:#b45309; --err:#cc4117;
+}
 html,body,.stApp,[class*="css"]{font-family:'Pretendard',-apple-system,'Malgun Gothic',sans-serif;}
 .stApp{background:var(--bg);}
 [data-testid="stHeader"]{background:transparent;}
-.block-container{max-width:1280px;padding-top:1.1rem;padding-bottom:3rem;}
+.block-container{max-width:1240px;padding-top:1rem;padding-bottom:4rem;}
 
-/* 헤더 카드 */
-.ida-header{display:flex;align-items:center;gap:14px;background:#fff;border:1px solid var(--line);
-  border-radius:14px;padding:14px 18px;margin-bottom:12px;
-  box-shadow:0 1px 3px rgba(20,24,40,.07),0 4px 16px rgba(20,24,40,.05);}
-.ida-logo{width:40px;height:40px;border-radius:10px;flex-shrink:0;
-  background:linear-gradient(135deg,var(--brand),#7c5cd6);display:flex;align-items:center;
-  justify-content:center;color:#fff;font-weight:800;font-size:18px;}
-.ida-title{font-weight:800;font-size:18px;color:var(--ink);line-height:1.25;}
-.ida-sub{font-size:12.5px;color:var(--ink2);}
-.ida-panel-title{font-weight:700;font-size:14.5px;color:var(--ink);margin:2px 0 8px;
+/* 헤더 — 밝은 에디토리얼(그라데이션 로고 제거) */
+.ida-header{background:var(--canvas);border:1px solid var(--line);border-radius:20px;
+  padding:18px 22px;margin-bottom:14px;box-shadow:none;}
+.ida-eyebrow{font-family:'SF Mono','JetBrains Mono',Consolas,monospace;font-size:11px;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--ink2);margin-bottom:5px;}
+.ida-title{font-weight:800;font-size:22px;letter-spacing:-0.03em;color:var(--ink);line-height:1.1;}
+.ida-sub{font-size:13px;color:var(--ink2);margin-top:4px;}
+.ida-panel-title{font-weight:700;font-size:14.5px;color:var(--ink);margin:2px 0 10px;
   letter-spacing:-0.01em;display:flex;align-items:center;}
-.ida-title{letter-spacing:-0.02em;}
-[data-testid="stMarkdownContainer"] h1,[data-testid="stMarkdownContainer"] h2{letter-spacing:-0.015em;}
-/* STEP 바 버튼: 활성=채움, 비활성=아웃라인 */
-div[data-testid="stHorizontalBlock"] .stButton>button{font-weight:700;}
 
-/* 버튼 */
-.stButton>button,.stDownloadButton>button,.stFormSubmitButton>button{
-  border-radius:9px;font-weight:600;border:1px solid var(--line);transition:.15s;}
-.stButton>button:hover,.stDownloadButton>button:hover{border-color:var(--brand);color:var(--brand);}
-.stButton>button[kind="primary"],.stFormSubmitButton>button[kind="primary"]{
-  background:var(--brand);border-color:var(--brand);color:#fff;}
-.stButton>button[kind="primary"]:hover,.stFormSubmitButton>button[kind="primary"]:hover{
-  background:var(--brand2);border-color:var(--brand2);color:#fff;}
-
-/* expander = 카드 */
-[data-testid="stExpander"]{border:1px solid var(--line);border-radius:12px;background:#fff;
-  box-shadow:0 1px 3px rgba(20,24,40,.06);margin-bottom:12px;}
+/* 카드·컨테이너·expander — 헤어라인, 그림자 없음 */
+[data-testid="stVerticalBlockBorderWrapper"]{border-radius:20px;border-color:var(--line)!important;}
+[data-testid="stExpander"]{border:1px solid var(--line);border-radius:16px;background:var(--canvas);
+  box-shadow:none;margin-bottom:12px;}
 [data-testid="stExpander"] summary{font-weight:700;color:var(--ink);}
 [data-testid="stExpander"] summary:hover{color:var(--brand);}
 
+/* 버튼 — 알약(pill) */
+.stButton>button,.stDownloadButton>button,.stFormSubmitButton>button{
+  border-radius:999px;font-weight:600;border:1px solid var(--line);background:var(--canvas);
+  color:var(--ink);transition:.15s;}
+.stButton>button:hover,.stDownloadButton>button:hover{border-color:var(--brand);color:var(--brand);}
+.stButton>button[kind="primary"],.stFormSubmitButton>button[kind="primary"],
+.stFormSubmitButton>button[kind="primaryFormSubmit"]{
+  background:var(--brand);border-color:var(--brand);color:#fff;}
+.stButton>button[kind="primary"]:hover,.stFormSubmitButton>button[kind="primary"]:hover,
+.stFormSubmitButton>button[kind="primaryFormSubmit"]:hover{
+  background:var(--brand2);border-color:var(--brand2);color:#fff;}
+
 /* 입력 */
-.stTextInput input,.stTextArea textarea{border-radius:8px;}
+.stTextInput input,.stTextArea textarea{border-radius:10px;border-color:var(--line);background:var(--canvas);}
 .stTextInput input:focus,.stTextArea textarea:focus{border-color:var(--brand);box-shadow:none;}
 
-/* 우측 출력 카드 */
-[data-testid="stVerticalBlockBorderWrapper"]{border-radius:12px;}
+/* 안내/정보 박스 — 파스텔 블록(Figma 시그니처) */
+[data-testid="stAlertContainer"]{border-radius:16px;border:none;}
+
+/* 교재/PPT 탭 — 알약 */
+[data-baseweb="tab-list"]{gap:8px;border-bottom:none;}
+[data-baseweb="tab"]{background:var(--canvas);border:1px solid var(--line)!important;border-radius:999px;
+  padding:6px 16px;font-weight:600;}
+[data-baseweb="tab"][aria-selected="true"]{background:var(--brand);color:#fff;border-color:var(--brand)!important;}
+[data-baseweb="tab-highlight"],[data-baseweb="tab-border"]{display:none!important;}
 
 /* 산출물 마크다운 */
-[data-testid="stMarkdownContainer"] h1{font-size:22px;border-bottom:2px solid var(--brand-soft);padding-bottom:8px;}
-[data-testid="stMarkdownContainer"] h2{font-size:17px;color:var(--brand2);margin-top:22px;}
+[data-testid="stMarkdownContainer"] h1{font-size:24px;letter-spacing:-0.02em;border-bottom:1px solid var(--line);padding-bottom:8px;}
+[data-testid="stMarkdownContainer"] h2{font-size:18px;letter-spacing:-0.015em;color:var(--ink);margin-top:24px;}
 [data-testid="stMarkdownContainer"] h3{font-size:15px;}
 [data-testid="stMarkdownContainer"] table{border-collapse:collapse;width:100%;font-size:13px;margin:12px 0;}
-[data-testid="stMarkdownContainer"] th{background:var(--brand-soft);color:var(--brand2);font-weight:700;text-align:left;}
-[data-testid="stMarkdownContainer"] th,[data-testid="stMarkdownContainer"] td{border:1px solid var(--line);padding:7px 10px;}
-[data-testid="stMarkdownContainer"] tr:nth-child(even) td{background:#fafbfd;}
+[data-testid="stMarkdownContainer"] th{background:var(--lilac);color:var(--ink);font-weight:700;text-align:left;}
+[data-testid="stMarkdownContainer"] th,[data-testid="stMarkdownContainer"] td{border:1px solid var(--line);padding:8px 11px;}
+[data-testid="stMarkdownContainer"] tr:nth-child(even) td{background:#fafafa;}
 [data-testid="stMarkdownContainer"] blockquote{border-left:3px solid var(--brand);background:var(--brand-soft);
-  padding:8px 14px;border-radius:0 8px 8px 0;}
-[data-testid="stMarkdownContainer"] code{background:#eef0f4;border-radius:4px;padding:1px 5px;}
+  padding:8px 14px;border-radius:0 10px 10px 0;}
+[data-testid="stMarkdownContainer"] code{background:#f2f2f4;border-radius:5px;padding:1px 5px;}
 </style>
 """
 st.markdown(_CSS, unsafe_allow_html=True)
@@ -348,10 +357,10 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 st.markdown(
     '<div class="ida-header">'
-    '<div class="ida-logo">교</div>'
-    '<div><div class="ida-title">교수설계 가이드 에이전트</div>'
+    '<div class="ida-eyebrow">AI · 교수설계 스튜디오</div>'
+    '<div class="ida-title">교수설계 가이드 에이전트</div>'
     '<div class="ida-sub">ABCD 학습목표 · Bloom 정렬 · 백워드 설계(WHERETO) · Mayer 멀티미디어 원리 기반</div>'
-    '</div></div>',
+    '</div>',
     unsafe_allow_html=True,
 )
 
