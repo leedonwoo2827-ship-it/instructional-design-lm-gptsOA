@@ -5,7 +5,8 @@
 2단 레이아웃)과 브랜드 디자인을 이식했다.
 
 호출 경로: Streamlit → openai SDK → 사내 LiteLLM 프록시(/v1/chat/completions).
-URL·API 키·모델은 상단 '연결 설정'(접기/펴기)에서 입력하며 data/user_settings.json 에 저장.
+URL·API 키는 상단 '연결 설정'(접기/펴기)에서 입력하며 data/user_settings.json 에 저장.
+모델은 고정(사이드바에 명시만). 디자인 슬라이드(②)의 구조화 작업은 비추론 모델을 자동 사용.
 """
 from __future__ import annotations
 
@@ -389,11 +390,14 @@ def run_design(status) -> None:
     if not outline.strip():
         st.warning("먼저 ① 슬라이드 개요를 생성하세요.")
         return
+    # 구조화(JSON) 작업은 추론(-think) 모델이 형식을 깨뜨리므로 비추론 모델로 강제.
     provider = llm_mod.build_provider(ss.settings)
+    provider.model = ss.settings.model.replace("-think", "")
+    print(f"[design] 아트디렉터 모델={provider.model}", flush=True)
 
     def gen_fn(system, user, mt):
         return provider.generate(system, [{"role": "user", "content": user}],
-                                 max_tokens=mt, temperature=0.3)
+                                 max_tokens=mt, temperature=0.2)
 
     deck_title = out_name("슬라이드")
     subtitle = f"{ss.script_week}주차 · {(ss.form.get('title') or '강의').strip()}"
@@ -625,9 +629,10 @@ with st.sidebar:
         s.base_url = st.text_input("LiteLLM URL", value=s.base_url)
         s.api_key = st.text_input("API 키", value=s.api_key, type="password",
                                   help="사내 대시보드(/ui/)에서 발급한 sk- 키")
-        _mids = list(settings_mod.MODELS.keys())
-        s.model = st.selectbox("모델", _mids, index=_mids.index(s.model) if s.model in _mids else 0,
-                               format_func=lambda m: settings_mod.MODELS[m])
+        # 모델은 고정(선택 제거) — 사용 모델을 명시만 한다. (산출물 확장 대비)
+        _cur = settings_mod.MODELS.get(s.model, s.model)
+        st.markdown(f"**사용 모델** · {_cur}")
+        st.caption(f"디자인 슬라이드(②)는 형식 안정성을 위해 비추론 모델({s.model.replace('-think', '')})을 자동 사용합니다.")
         bc1, bc2 = st.columns(2)
         if bc1.button("연결 테스트", use_container_width=True):
             with st.spinner("확인 중…"):
