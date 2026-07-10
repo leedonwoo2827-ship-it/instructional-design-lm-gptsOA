@@ -267,13 +267,13 @@ def render_section(slide, s):
 
 def render_photo(slide, s, img):
     add_title(slide, s.get("title", ""))
-    by = add_chip(slide, s.get("chip"))
+    # 사진이 있으면 칩·본문을 좌측 열(7.35")로 제한해 우측 사진과 겹치지 않게 한다.
+    col_w = 7.35 if img else CONTENT_W
+    by = add_chip(slide, s.get("chip"), w=col_w)
     body_y = max(by + 0.2, 2.72)
+    add_bullets(slide, s.get("bullets", []), MARGIN + 0.02, body_y, col_w - 0.02, 6.9 - body_y)
     if img:
-        add_bullets(slide, s.get("bullets", []), MARGIN + 0.02, body_y, 7.33, 6.9 - body_y)
         add_photo(slide, img)
-    else:
-        add_bullets(slide, s.get("bullets", []), MARGIN + 0.02, body_y, CONTENT_W, 6.9 - body_y)
 
 
 def render_bullets(slide, s):
