@@ -144,9 +144,9 @@ STEP_META = [
     (1, "강의 정보 입력", "과목 · 대상 · 운영 방식"),
     (2, "강의계획서", "목표–평가–주차 정렬"),
     (3, "교재", "학생용 읽기 자료"),
-    (4, "슬라이드 개요", "원고(개요) 생성"),
+    (4, "슬라이드 개요", "원고 · 레이아웃 PPTX"),
     (5, "노트북LM 코드", "렌더 코드 생성"),
-    (6, "비주얼·PPTX", "사진 갈음 · 디자인 PPTX"),
+    (6, "디자인 PPTX", "사진 포함 최종본"),
 ]
 REFINE_TMPL = (
     "다음 요청대로 수정하여, 수정된 문서 전체를 다시 출력해 주세요. "
@@ -839,9 +839,6 @@ if ss.step == 3:
                                            "content": script_user_msg(ss.script_week, "doc", note, ss.syllabus_md)}]
                     ss._pending = {"kind": "gen", "doc": "script_doc"}
                     st.rerun()
-            if st.button("슬라이드 만들기 (STEP 4) →", key="goto4", use_container_width=True):
-                ss.step = 4
-                st.rerun()
 
     if ss.syllabus_md:
         doc_ph, doc_ctrl = script_downloads("script_doc_md", "script_doc", False, busy=bool(pending))
@@ -885,17 +882,25 @@ elif ss.step == 4:
                     ss._pending = {"kind": "gen", "doc": "script_ppt"}
                     st.rerun()
             if ss.script_ppt_md.strip():
-                nav = st.columns(2)
-                if nav[0].button("5단계 · 노트북LM 렌더 코드 →", use_container_width=True):
-                    ss.step = 5
-                    st.rerun()
-                if nav[1].button("6단계 · 비주얼 원고 · 디자인 PPTX →", use_container_width=True):
-                    ss.step = 6
-                    st.rerun()
+                lc = st.columns([3.4, 3.4, 3.2])
+                if lc[0].button("레이아웃 PPTX 생성 (사진 없이·결합용)", type="primary",
+                                disabled=bool(pending), use_container_width=True):
+                    if ensure_ready():
+                        ss._pending = {"kind": "design_nophoto", "doc": "script_ppt"}
+                        st.rerun()
+                if ss.deck_nophoto_bytes:
+                    lc[1].download_button("⬇ 레이아웃 PPTX (사진 없이)", ss.deck_nophoto_bytes,
+                                          file_name=(ss.deck_name or out_name("슬라이드")) + "_레이아웃.pptx",
+                                          mime=PPTX_MIME, key="dl_deck_np", use_container_width=True)
 
     if ss.syllabus_md:
         ppt_ph, ppt_ctrl = script_downloads("script_ppt_md", "script_ppt", True, busy=bool(pending))
-        if pending and pending.get("doc") == "script_ppt" and pending.get("kind") in ("gen", "refine", "check"):
+        if pending and pending.get("kind") == "design_nophoto":
+            status = st.empty()
+            with st.spinner("레이아웃 PPTX 생성 중… (사진 없이 · 구성 분석 → 빌드)"):
+                run_design(status, with_photos=False)
+            st.rerun()
+        elif pending and pending.get("doc") == "script_ppt" and pending.get("kind") in ("gen", "refine", "check"):
             _m = {"gen": "슬라이드 개요 작성 중…", "refine": "수정 반영 중…",
                   "check": "정렬 점검 중…"}.get(pending["kind"], "작성 중…")
             with st.spinner(_m):
@@ -977,44 +982,24 @@ elif ss.step == 6:
         if not ss.script_ppt_md.strip():
             st.info("먼저 4단계에서 슬라이드 개요(원고)를 생성하세요.")
         else:
-            st.caption("**③ 레이아웃 PPTX(사진 없이)** 를 받아 5단계(NotebookLM) 슬라이드와 결합하는 걸 권장합니다. "
-                       "사진이 필요하면 **②(사진 포함)**, 사진 방향 참고는 **①비주얼 원고**.")
+            st.caption("개요를 **사진까지 넣은 최종 디자인 PPTX** 로 빌드합니다. "
+                       "(사진 없는 **결합용 레이아웃 PPTX** 는 4단계에서 받습니다.)")
             _has_outline = bool(ss.script_ppt_md.strip())
-            bc = st.columns(3)
-            if bc[0].button("① 비주얼 원고 생성 (사진 갈음)", type="secondary",
-                            disabled=bool(pending), use_container_width=True):
-                if ensure_ready():
-                    ss._pending = {"kind": "visualbrief", "doc": "script_ppt"}
-                    st.rerun()
-            if bc[1].button("② 디자인 PPTX (사진 포함)", type="secondary",
+            _base = ss.deck_name or out_name("슬라이드")
+            bc = st.columns([3.6, 3.4, 3.0])
+            if bc[0].button("디자인 PPTX 생성 (사진 포함·최종)", type="primary",
                             disabled=(not _has_outline) or bool(pending), use_container_width=True):
                 if ensure_ready():
                     ss._pending = {"kind": "design", "doc": "script_ppt"}
                     st.rerun()
-            if bc[2].button("③ 레이아웃 PPTX (사진 없이·결합용)", type="primary",
-                            disabled=(not _has_outline) or bool(pending), use_container_width=True):
-                if ensure_ready():
-                    ss._pending = {"kind": "design_nophoto", "doc": "script_ppt"}
-                    st.rerun()
             # 다운로드는 상단에(완료 시 첫 산출물 위)
-            _base = ss.deck_name or out_name("슬라이드")
-            if ss.deck_nophoto_bytes or ss.deck_bytes or ss.visual_brief_md:
-                dl = st.columns(4)
-                if ss.deck_nophoto_bytes:
-                    dl[0].download_button("⬇ 레이아웃 PPTX (사진 없이)", ss.deck_nophoto_bytes,
-                                          file_name=_base + "_레이아웃.pptx",
-                                          mime=PPTX_MIME, key="dl_deck_np", use_container_width=True)
-                if ss.deck_bytes:
-                    dl[1].download_button("⬇ 디자인 PPTX (사진 포함)", ss.deck_bytes,
-                                          file_name=_base + ".pptx",
-                                          mime=PPTX_MIME, key="dl_deck", use_container_width=True)
-                    dl[2].download_button("⬇ 이미지 출처(.txt)", ss.credits_txt.encode("utf-8"),
-                                          file_name=_base + "_이미지출처.txt",
-                                          mime="text/plain", key="dl_credits", use_container_width=True)
-                if ss.visual_brief_md:
-                    dl[3].download_button("⬇ 비주얼 원고 (.md)", ss.visual_brief_md,
-                                          file_name=_base + "_비주얼원고.md",
-                                          mime="text/markdown", key="dl_vbrief", use_container_width=True)
+            if ss.deck_bytes:
+                bc[1].download_button("⬇ 디자인 PPTX (사진 포함)", ss.deck_bytes,
+                                      file_name=_base + ".pptx",
+                                      mime=PPTX_MIME, key="dl_deck", use_container_width=True)
+                bc[2].download_button("⬇ 이미지 출처(.txt)", ss.credits_txt.encode("utf-8"),
+                                      file_name=_base + "_이미지출처.txt",
+                                      mime="text/plain", key="dl_credits", use_container_width=True)
 
             _tpl_on = TEMPLATE_PATH.exists()
             with st.expander(f"PPT 회사 양식(.pptx) — {'적용됨 ✓' if _tpl_on else '기본 양식 사용 중'}"):
@@ -1030,33 +1015,13 @@ elif ss.step == 6:
                     st.rerun()
 
     if ss.script_ppt_md.strip():
-        vb_ph = st.empty()
         if pending and pending.get("kind") == "design":
             status = st.empty()
             with st.spinner("디자인 PPTX 생성 중… (구성 분석 → 사진 수집 → 빌드)"):
                 run_design(status, with_photos=True)
             st.rerun()
-        elif pending and pending.get("kind") == "design_nophoto":
-            status = st.empty()
-            with st.spinner("레이아웃 PPTX 생성 중… (사진 없이 · 구성 분석 → 빌드)"):
-                run_design(status, with_photos=False)
-            st.rerun()
-        elif pending and pending.get("kind") == "visualbrief":
-            with st.spinner("비주얼 원고 생성 중… (슬라이드별 아트디렉션)"):
-                run_visual_brief(vb_ph)
-            persist()
-            st.rerun()
-        elif ss.visual_brief_md:
-            with st.expander("비주얼 원고 (사진 갈음 아트디렉션)", expanded=True):
-                st.markdown(ss.visual_brief_md)
-                _ed = st.text_area("직접 편집", value=ss.visual_brief_md, height=260,
-                                   key="edit_vbrief", label_visibility="collapsed")
-                if st.button("비주얼 원고 편집 저장", key="save_vbrief", use_container_width=True):
-                    ss.visual_brief_md = _ed
-                    st.success("저장했습니다. (② 디자인 PPTX 사진 검색에 반영)")
-                    st.rerun()
         else:
-            st.info("‘① 비주얼 원고 생성’ 또는 ‘② 디자인 PPTX’ 를 누르면 결과가 여기에 표시됩니다.")
+            st.info("‘디자인 PPTX 생성 (사진 포함·최종)’ 을 누르면 상단에서 내려받을 수 있습니다.")
 
 # ===========================================================================
 # STEP 1 — 강의계획서 전체 폭 (입력은 사이드바)
