@@ -427,27 +427,23 @@ def run_design(status) -> None:
     status.markdown("**① 슬라이드 구성 분석 중…** (레이아웃·사진 배치 결정)")
     plan = deck_builder.plan_from_outline(gen_fn, outline, deck_title, subtitle=subtitle)
 
-    # 요청: 모든 본문 슬라이드에 사진 1장씩(좌우 교차 배치). 내용 불일치는 SME가 갈음.
-    # 검색어 우선순위: 비주얼 원고(영문 쿼리) > 아트디렉터 image_query > 폴백 로테이션.
-    # 표지(index 0)만 제외하고 전부 photo 로 강제하되, 본문 텍스트(bullets)는 보존한다.
+    # 아트디렉터의 다양한 유형(photo / process / cards / compare / section)을 그대로 살린다.
+    #  · 표(table)와 하단 와이드 프리셋은 제외(요청) → table 은 bullets 로 강등.
+    #  · photo 유형은 비주얼 원고(영문 쿼리) > 아트 image_query > 폴백 순으로 검색어를 보장.
+    #  · process/cards/compare 등 도식 유형은 사진 없이 그대로 렌더(요청: 사진 불필요).
     briefs = slide_render.parse_visual_brief(ss.visual_brief_md)
     for i in range(1, len(plan)):
         s = plan[i]
-        if not s.get("bullets"):  # cards/compare/table → 텍스트 살려 photo 본문으로
-            filled = []
-            for it in (s.get("items") or []):
-                lbl, desc = it.get("label", ""), it.get("desc", "")
-                if lbl or desc:
-                    filled.append(f"{lbl} — {desc}" if (lbl and desc) else (lbl or desc))
-            if not filled and s.get("lines"):
-                filled = list(s["lines"])
-            if filled:
-                s["bullets"] = filled[:5]
-        q = ((briefs.get(i) or {}).get("query") or "").strip() or (s.get("image_query") or "").strip()
-        if not q:
-            q = _FALLBACK_IMG_QUERIES[i % len(_FALLBACK_IMG_QUERIES)]
-        s["type"] = "photo"
-        s["image_query"] = q
+        if s.get("type") == "table":  # 표 레이아웃 제외 → 불릿으로
+            if not s.get("bullets") and s.get("rows"):
+                s["bullets"] = [" · ".join(str(c) for c in r) for r in s["rows"][:5]]
+            s["type"] = "bullets"
+        if s.get("type") == "photo":
+            bq = ((briefs.get(i) or {}).get("query") or "").strip()
+            if bq:
+                s["image_query"] = bq
+            if not (s.get("image_query") or "").strip():
+                s["image_query"] = _FALLBACK_IMG_QUERIES[i % len(_FALLBACK_IMG_QUERIES)]
 
     queries = deck_builder.image_queries(plan)
     images = {}
