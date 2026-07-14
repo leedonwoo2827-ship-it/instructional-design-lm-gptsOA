@@ -184,7 +184,8 @@ ss.setdefault("script_ppt_msgs", [])
 ss.setdefault("ping_status", None)
 ss.setdefault("form", {})
 ss.setdefault("had_login", oauth.is_logged_in())
-ss.setdefault("deck_bytes", None)     # ②이미지·레이아웃 정리 결과(.pptx 바이트)
+ss.setdefault("deck_bytes", None)     # ②디자인 PPTX(사진 포함) 바이트
+ss.setdefault("deck_nophoto_bytes", None)  # ③레이아웃만 PPTX(사진 없이·결합용) 바이트
 ss.setdefault("credits_txt", "")      # 이미지 출처 텍스트
 ss.setdefault("deck_name", "")        # 디자인 덱 파일명
 ss.setdefault("img_cache", {})        # 검색어→(bytes,credit) 세션 캐시
@@ -215,7 +216,7 @@ def clear_artifacts() -> None:
     ss.syllabus_md, ss.syllabus_msgs = "", []
     ss.script_doc_md, ss.script_ppt_md = "", ""
     ss.script_doc_msgs, ss.script_ppt_msgs = [], []
-    ss.deck_bytes, ss.credits_txt, ss.deck_name = None, "", ""
+    ss.deck_bytes, ss.deck_nophoto_bytes, ss.credits_txt, ss.deck_name = None, None, "", ""
     ss.render_code, ss.visual_brief_md, ss.visual_brief_msgs = "", "", []
     ss.script_week, ss.step = 1, 1
 
@@ -230,7 +231,7 @@ def load_project_into_session(pid: int) -> None:
     ss.script_week = p["script_week"] or 1
     ss.script_doc_md, ss.script_doc_msgs = p["script_doc_md"], p["script_doc_msgs"]
     ss.script_ppt_md, ss.script_ppt_msgs = p["script_ppt_md"], p["script_ppt_msgs"]
-    ss.deck_bytes, ss.credits_txt, ss.deck_name = None, "", ""
+    ss.deck_bytes, ss.deck_nophoto_bytes, ss.credits_txt, ss.deck_name = None, None, "", ""
     ss.render_chunks, ss.visual_brief_md, ss.visual_brief_msgs = [], "", []
 
 
@@ -405,10 +406,12 @@ def run_pending(pending: dict, placeholder) -> None:
             ss[msgs_key].append({"role": "assistant", "content": full})
 
 
-def run_design(status) -> None:
-    """②이미지·레이아웃 정리: 개요(md) → 아트디렉터 플랜 → 이미지 → 디자인 .pptx.
+def run_design(status, with_photos: bool = True) -> None:
+    """디자인 .pptx 빌드: 개요(md) → 아트디렉터 플랜 → (사진) → 레이아웃 .pptx.
 
-    결과를 ss.deck_bytes / ss.credits_txt / ss.deck_name 에 저장. 실패는 그레이스풀.
+    with_photos=True  → 사진 삽입, ss.deck_bytes / ss.credits_txt 에 저장.
+    with_photos=False → 사진 없이 레이아웃만(결합용), ss.deck_nophoto_bytes 에 저장.
+    실패는 그레이스풀.
     """
     outline = ss.script_ppt_md
     if not outline.strip():
@@ -438,30 +441,31 @@ def run_design(status) -> None:
             if not s.get("bullets") and s.get("rows"):
                 s["bullets"] = [" · ".join(str(c) for c in r) for r in s["rows"][:5]]
             s["type"] = "bullets"
-        if s.get("type") == "photo":
+        if with_photos and s.get("type") == "photo":
             bq = ((briefs.get(i) or {}).get("query") or "").strip()
             if bq:
                 s["image_query"] = bq
             if not (s.get("image_query") or "").strip():
                 s["image_query"] = _FALLBACK_IMG_QUERIES[i % len(_FALLBACK_IMG_QUERIES)]
 
-    queries = deck_builder.image_queries(plan)
     images = {}
-    if queries:
-        bar = st.progress(0.0, text=f"주제 사진 수집 중… (0/{len(queries)})")
-        _ukey = (ss.settings.unsplash_key or "").strip()
-        for k, (idx, q) in enumerate(queries.items(), 1):
-            data, credit = image_search.fetch(q, cache=ss.img_cache, unsplash_key=_ukey)
-            if not data:  # 좁은 검색어가 0건이면 폴백으로 재시도 → 페이지마다 사진 보장
-                fb = _FALLBACK_IMG_QUERIES[idx % len(_FALLBACK_IMG_QUERIES)]
-                data, credit = image_search.fetch(fb, cache=ss.img_cache, unsplash_key=_ukey)
-            if data:
-                images[idx] = data
-                plan[idx]["_credit"] = credit
-            else:
-                print(f"[design] 슬라이드 {idx + 1}: 사진 검색 실패(q='{q}')", flush=True)
-            bar.progress(k / len(queries), text=f"주제 사진 수집 중… ({k}/{len(queries)})")
-        bar.empty()
+    if with_photos:
+        queries = deck_builder.image_queries(plan)
+        if queries:
+            bar = st.progress(0.0, text=f"주제 사진 수집 중… (0/{len(queries)})")
+            _ukey = (ss.settings.unsplash_key or "").strip()
+            for k, (idx, q) in enumerate(queries.items(), 1):
+                data, credit = image_search.fetch(q, cache=ss.img_cache, unsplash_key=_ukey)
+                if not data:  # 좁은 검색어가 0건이면 폴백으로 재시도 → 페이지마다 사진 보장
+                    fb = _FALLBACK_IMG_QUERIES[idx % len(_FALLBACK_IMG_QUERIES)]
+                    data, credit = image_search.fetch(fb, cache=ss.img_cache, unsplash_key=_ukey)
+                if data:
+                    images[idx] = data
+                    plan[idx]["_credit"] = credit
+                else:
+                    print(f"[design] 슬라이드 {idx + 1}: 사진 검색 실패(q='{q}')", flush=True)
+                bar.progress(k / len(queries), text=f"주제 사진 수집 중… ({k}/{len(queries)})")
+            bar.empty()
 
     status.markdown("**슬라이드 빌드 중…** (네이비+앰버 레이아웃 적용)")
     data = deck_builder.build_deck(
@@ -470,12 +474,15 @@ def run_design(status) -> None:
     if not data:
         st.error("슬라이드 빌드 실패(python-pptx 확인).")
         return
-    entries = [(i + 1, plan[i].get("_credit")) for i in sorted(images.keys())]
-    ss.deck_bytes = data
     ss.deck_name = deck_title
-    ss.credits_txt = image_search.credits_text(f"{deck_title} — 이미지 출처 (CC 라이선스)", entries)
-    n_pic = len(images)
-    status.markdown(f"**완료** — {len(plan)}장 · 사진 {n_pic}장 삽입. 아래에서 내려받으세요.")
+    if with_photos:
+        entries = [(i + 1, plan[i].get("_credit")) for i in sorted(images.keys())]
+        ss.deck_bytes = data
+        ss.credits_txt = image_search.credits_text(f"{deck_title} — 이미지 출처 (CC 라이선스)", entries)
+        status.markdown(f"**완료** — {len(plan)}장 · 사진 {len(images)}장 삽입. 위에서 내려받으세요.")
+    else:
+        ss.deck_nophoto_bytes = data
+        status.markdown(f"**완료** — {len(plan)}장 · 사진 없이 레이아웃만(결합용). 위에서 내려받으세요.")
 
 
 def run_visual_brief(placeholder) -> None:
@@ -970,33 +977,43 @@ elif ss.step == 6:
         if not ss.script_ppt_md.strip():
             st.info("먼저 4단계에서 슬라이드 개요(원고)를 생성하세요.")
         else:
-            st.caption("**비주얼 원고**(사진 갈음 아트디렉션)와 **디자인 PPTX**(사진 좌·우 배치)를 만듭니다. "
-                       "이 **최종 PPTX** 를 내려받아 5단계(NotebookLM) 슬라이드를 SME 가 합칩니다.")
+            st.caption("**③ 레이아웃 PPTX(사진 없이)** 를 받아 5단계(NotebookLM) 슬라이드와 결합하는 걸 권장합니다. "
+                       "사진이 필요하면 **②(사진 포함)**, 사진 방향 참고는 **①비주얼 원고**.")
             _has_outline = bool(ss.script_ppt_md.strip())
-            bc = st.columns([2.8, 2.8, 2.2])
-            if bc[0].button("① 비주얼 원고 생성 (사진 갈음)", type="primary",
+            bc = st.columns(3)
+            if bc[0].button("① 비주얼 원고 생성 (사진 갈음)", type="secondary",
                             disabled=bool(pending), use_container_width=True):
                 if ensure_ready():
                     ss._pending = {"kind": "visualbrief", "doc": "script_ppt"}
                     st.rerun()
-            if bc[1].button("② 이미지·레이아웃 정리 (디자인 PPTX)", type="primary",
+            if bc[1].button("② 디자인 PPTX (사진 포함)", type="secondary",
                             disabled=(not _has_outline) or bool(pending), use_container_width=True):
                 if ensure_ready():
                     ss._pending = {"kind": "design", "doc": "script_ppt"}
                     st.rerun()
+            if bc[2].button("③ 레이아웃 PPTX (사진 없이·결합용)", type="primary",
+                            disabled=(not _has_outline) or bool(pending), use_container_width=True):
+                if ensure_ready():
+                    ss._pending = {"kind": "design_nophoto", "doc": "script_ppt"}
+                    st.rerun()
             # 다운로드는 상단에(완료 시 첫 산출물 위)
-            if ss.deck_bytes or ss.visual_brief_md:
-                dl = st.columns(3)
+            _base = ss.deck_name or out_name("슬라이드")
+            if ss.deck_nophoto_bytes or ss.deck_bytes or ss.visual_brief_md:
+                dl = st.columns(4)
+                if ss.deck_nophoto_bytes:
+                    dl[0].download_button("⬇ 레이아웃 PPTX (사진 없이)", ss.deck_nophoto_bytes,
+                                          file_name=_base + "_레이아웃.pptx",
+                                          mime=PPTX_MIME, key="dl_deck_np", use_container_width=True)
                 if ss.deck_bytes:
-                    dl[0].download_button("⬇ 디자인 PPTX (최종)", ss.deck_bytes,
-                                          file_name=(ss.deck_name or out_name("슬라이드")) + ".pptx",
+                    dl[1].download_button("⬇ 디자인 PPTX (사진 포함)", ss.deck_bytes,
+                                          file_name=_base + ".pptx",
                                           mime=PPTX_MIME, key="dl_deck", use_container_width=True)
-                    dl[1].download_button("⬇ 이미지 출처(.txt)", ss.credits_txt.encode("utf-8"),
-                                          file_name=(ss.deck_name or "슬라이드") + "_이미지출처.txt",
+                    dl[2].download_button("⬇ 이미지 출처(.txt)", ss.credits_txt.encode("utf-8"),
+                                          file_name=_base + "_이미지출처.txt",
                                           mime="text/plain", key="dl_credits", use_container_width=True)
                 if ss.visual_brief_md:
-                    dl[2].download_button("⬇ 비주얼 원고 (.md)", ss.visual_brief_md,
-                                          file_name=(ss.deck_name or out_name("슬라이드")) + "_비주얼원고.md",
+                    dl[3].download_button("⬇ 비주얼 원고 (.md)", ss.visual_brief_md,
+                                          file_name=_base + "_비주얼원고.md",
                                           mime="text/markdown", key="dl_vbrief", use_container_width=True)
 
             _tpl_on = TEMPLATE_PATH.exists()
@@ -1016,8 +1033,13 @@ elif ss.step == 6:
         vb_ph = st.empty()
         if pending and pending.get("kind") == "design":
             status = st.empty()
-            with st.spinner("이미지·레이아웃 정리 중… (구성 분석 → 사진 수집 → 빌드)"):
-                run_design(status)
+            with st.spinner("디자인 PPTX 생성 중… (구성 분석 → 사진 수집 → 빌드)"):
+                run_design(status, with_photos=True)
+            st.rerun()
+        elif pending and pending.get("kind") == "design_nophoto":
+            status = st.empty()
+            with st.spinner("레이아웃 PPTX 생성 중… (사진 없이 · 구성 분석 → 빌드)"):
+                run_design(status, with_photos=False)
             st.rerun()
         elif pending and pending.get("kind") == "visualbrief":
             with st.spinner("비주얼 원고 생성 중… (슬라이드별 아트디렉션)"):
