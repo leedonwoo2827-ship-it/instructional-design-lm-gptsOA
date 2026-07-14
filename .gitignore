@@ -5,6 +5,7 @@ __pycache__/
 venv/
 .env
 data/user_settings.json
+data/chatgpt_auth.json
 data/app.db
 data/app.db-wal
 data/app.db-shm

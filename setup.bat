@@ -48,7 +48,7 @@ if not exist ".env" (
 echo.
 echo ============================================
 echo  Setup complete. Double-click run.bat to start.
-echo  Enter your LiteLLM API key in the app sidebar.
+echo  Sign in via the app sidebar: 'ChatGPT login'.
 echo ============================================
 echo.
 pause

@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-"""교수설계 가이드 에이전트 — Streamlit + Ubion LiteLLM 프록시.
+"""교수설계 가이드 에이전트 — Streamlit + ChatGPT 계정 OAuth(구독).
 
 원본 _context/교수설계-에이전트.html 의 화면 구성(상단 STEP 바 · 좌측 입력 / 우측 출력
 2단 레이아웃)과 브랜드 디자인을 이식했다.
 
-호출 경로: Streamlit → openai SDK → 사내 LiteLLM 프록시(/v1/chat/completions).
-URL·API 키는 상단 '연결 설정'(접기/펴기)에서 입력하며 data/user_settings.json 에 저장.
-모델은 고정(사이드바에 명시만). 디자인 슬라이드(②)의 구조화 작업은 비추론 모델을 자동 사용.
+호출 경로: Streamlit → openai SDK(responses) → ChatGPT 백엔드(chatgpt.com/backend-api/wham).
+로그인은 사이드바 '연결 설정 › ChatGPT 로그인'(브라우저 OAuth), 토큰은 core/oauth.py 가
+data/chatgpt_auth.json 에 관리. 모델·추론강도는 사이드바에서 선택.
+STEP 4: 4-1 개요 → ② 디자인 PPT · 4-2 노트북LM 렌더 코드 · 4-3 비주얼 원고.
 """
 from __future__ import annotations
 
@@ -24,7 +25,9 @@ from core import db  # noqa: E402
 from core import deck_builder  # noqa: E402
 from core import image_search  # noqa: E402
 from core import llm as llm_mod  # noqa: E402
+from core import oauth  # noqa: E402
 from core import prompts  # noqa: E402
+from core import slide_render  # noqa: E402
 from core import user_settings as settings_mod  # noqa: E402
 from core.pptx_export import outline_to_pptx  # noqa: E402
 from core.viz import (  # noqa: E402
@@ -141,7 +144,9 @@ STEP_META = [
     (1, "강의 정보 입력", "과목 · 대상 · 운영 방식"),
     (2, "강의계획서", "목표–평가–주차 정렬"),
     (3, "교재", "학생용 읽기 자료"),
-    (4, "슬라이드", "개요 → 이미지·레이아웃"),
+    (4, "슬라이드 개요", "원고(개요) 생성"),
+    (5, "노트북LM 코드", "렌더 코드 생성"),
+    (6, "비주얼·PPTX", "사진 갈음 · 디자인 PPTX"),
 ]
 REFINE_TMPL = (
     "다음 요청대로 수정하여, 수정된 문서 전체를 다시 출력해 주세요. "
@@ -171,19 +176,29 @@ ss.setdefault("script_doc_msgs", [])
 ss.setdefault("script_ppt_msgs", [])
 ss.setdefault("ping_status", None)
 ss.setdefault("form", {})
-ss.setdefault("had_key", bool((ss.settings.api_key or "").strip()))
+ss.setdefault("had_login", oauth.is_logged_in())
 ss.setdefault("deck_bytes", None)     # ②이미지·레이아웃 정리 결과(.pptx 바이트)
 ss.setdefault("credits_txt", "")      # 이미지 출처 텍스트
 ss.setdefault("deck_name", "")        # 디자인 덱 파일명
 ss.setdefault("img_cache", {})        # 검색어→(bytes,credit) 세션 캐시
+ss.setdefault("render_code", "")         # 4-2 노트북LM: Studio 맞춤설정용 렌더 코드(스크립트)
+ss.setdefault("render_total", 0)         # 총 슬라이드(0=개요에서 자동 감지)
+ss.setdefault("render_per_chunk", 20)    # 한 번에(청크) 생성할 장수 → FUNCTION 개수 결정
+ss.setdefault("render_design", slide_render.DEFAULT_DESIGN)  # 디자인 시스템 프리셋
+ss.setdefault("render_intensity", slide_render.DEFAULT_INTENSITY)  # 스타일 강도
+ss.setdefault("render_format", slide_render.DEFAULT_FORMAT)  # 출력 형식(batch/kernel)
+ss.setdefault("render_pagenum", True)                        # 페이지 번호 지시 포함
+ss.setdefault("visual_brief_md", "")     # 4-3 비주얼 원고(아트디렉션)
+ss.setdefault("visual_brief_msgs", [])
+ss.setdefault("model_options", [])       # 계정 기준으로 불러온 모델 슬러그 목록
 
 
 # ---------------------------------------------------------------------------
 # 헬퍼
 # ---------------------------------------------------------------------------
 def ensure_ready() -> bool:
-    if not (ss.settings.api_key or "").strip():
-        st.warning("상단 '연결 설정'에서 API 키를 입력하고 저장하세요.")
+    if not oauth.is_logged_in():
+        st.warning("좌측 사이드바 '연결 설정'에서 **ChatGPT 로그인**을 눌러 계정을 연결하세요.")
         return False
     return True
 
@@ -194,6 +209,7 @@ def clear_artifacts() -> None:
     ss.script_doc_md, ss.script_ppt_md = "", ""
     ss.script_doc_msgs, ss.script_ppt_msgs = [], []
     ss.deck_bytes, ss.credits_txt, ss.deck_name = None, "", ""
+    ss.render_code, ss.visual_brief_md, ss.visual_brief_msgs = "", "", []
     ss.script_week, ss.step = 1, 1
 
 
@@ -208,6 +224,7 @@ def load_project_into_session(pid: int) -> None:
     ss.script_doc_md, ss.script_doc_msgs = p["script_doc_md"], p["script_doc_msgs"]
     ss.script_ppt_md, ss.script_ppt_msgs = p["script_ppt_md"], p["script_ppt_msgs"]
     ss.deck_bytes, ss.credits_txt, ss.deck_name = None, "", ""
+    ss.render_chunks, ss.visual_brief_md, ss.visual_brief_msgs = [], "", []
 
 
 def persist() -> None:
@@ -390,19 +407,27 @@ def run_design(status) -> None:
     if not outline.strip():
         st.warning("먼저 ① 슬라이드 개요를 생성하세요.")
         return
-    # 구조화(JSON) 작업은 추론(-think) 모델이 형식을 깨뜨리므로 비추론 모델로 강제.
+    # 구조화(JSON) 작업은 형식 안정성이 중요 → 추론 강도를 낮춰(low) 생성한다.
     provider = llm_mod.build_provider(ss.settings)
-    provider.model = ss.settings.model.replace("-think", "")
-    print(f"[design] 아트디렉터 모델={provider.model}", flush=True)
+    provider.effort = "low"
+    print(f"[design] 아트디렉터 모델={provider.model} · effort=low", flush=True)
 
     def gen_fn(system, user, mt):
-        return provider.generate(system, [{"role": "user", "content": user}],
-                                 max_tokens=mt, temperature=0.2)
+        return provider.generate(system, [{"role": "user", "content": user}], max_tokens=mt)
 
     deck_title = out_name("슬라이드")
     subtitle = f"{ss.script_week}주차 · {(ss.form.get('title') or '강의').strip()}"
     status.markdown("**① 슬라이드 구성 분석 중…** (레이아웃·사진 배치 결정)")
     plan = deck_builder.plan_from_outline(gen_fn, outline, deck_title, subtitle=subtitle)
+
+    # 4-3 비주얼 원고 반영: 사진 검색어 개선 / 대체(substitute) 슬라이드는 사진 건너뜀
+    briefs = slide_render.parse_visual_brief(ss.visual_brief_md)
+    for n, spec in briefs.items():
+        if 1 <= n < len(plan) and isinstance(spec, dict):
+            if spec.get("substitute"):
+                plan[n].pop("image_query", None)
+            elif spec.get("query") and plan[n].get("type") == "photo":
+                plan[n]["image_query"] = spec["query"]
 
     queries = deck_builder.image_queries(plan)
     images = {}
@@ -432,11 +457,47 @@ def run_design(status) -> None:
     status.markdown(f"**완료** — {len(plan)}장 · 사진 {n_pic}장 삽입. 아래에서 내려받으세요.")
 
 
-def script_downloads(md_key, doc_key, is_ppt):
-    """탭/스텝 상단 다운로드 버튼 → (본문 placeholder, 컨트롤 container) 반환."""
+def run_visual_brief(placeholder) -> None:
+    """4-3 비주얼 원고: 개요(4-1)를 받아 슬라이드별 아트디렉션 + JSON 스펙 생성."""
+    outline = ss.script_ppt_md
+    if not outline.strip():
+        st.warning("먼저 ① 4-1 슬라이드 개요를 생성하세요.")
+        return
+    msgs = [{"role": "user", "content":
+             f"아래 슬라이드 개요의 비주얼 원고(아트디렉션)를 작성하세요. "
+             f"사진 검색 지시문과, 사진이 부실할 슬라이드의 대체 도식 지시를 포함하고, "
+             f"맨 끝에 JSON 블록을 넣으세요.\n\n=== 슬라이드 개요 ===\n{outline}"}]
+    full = stream_into(placeholder, prompts.SYS_VISUAL_BRIEF, msgs,
+                       label="비주얼 원고", max_tokens=SLIDE_EXPAND_TOKENS)
+    if full:
+        ss.visual_brief_md = full
+        ss.visual_brief_msgs = msgs + [{"role": "assistant", "content": full}]
+
+
+def run_render_code() -> int:
+    """4-2 노트북LM: 총 장수·청크·디자인으로 Studio 렌더 코드 생성(LLM 불필요, 즉시).
+
+    반환: 사용된 총 슬라이드 수(0=개요 없음).
+    """
+    total = int(ss.render_total or 0) or slide_render.count_slides(ss.script_ppt_md)
+    if total < 1:
+        return 0
+    ss.render_code = slide_render.build_render_code(
+        total, per_chunk=int(ss.render_per_chunk or slide_render.DEFAULT_PER_CHUNK),
+        design_key=ss.render_design, intensity_key=ss.render_intensity,
+        fmt=ss.render_format, page_numbers=bool(ss.render_pagenum))
+    ss.deck_name = ss.deck_name or out_name("슬라이드")
+    return total
+
+
+def script_downloads(md_key, doc_key, is_ppt, busy=False):
+    """탭/스텝 상단 다운로드 버튼 → (본문 placeholder, 컨트롤 container) 반환.
+
+    busy=True(생성/수정/점검 진행 중)면 다운로드 버튼·요약을 감춘다(작성 중엔 노출 X).
+    """
     cur = ss[md_key]
     fn = out_name("PPT개요" if is_ppt else "교재")
-    if cur:
+    if cur and not busy:
         dc = st.columns([1, 1, 1, 6]) if is_ppt else st.columns([1, 1, 7])
         dc[0].download_button("MD", cur, file_name=fn + ".md", mime="text/markdown",
                               key=f"md_{doc_key}", use_container_width=True)
@@ -623,28 +684,66 @@ with st.sidebar:
                 ss._pending = {"kind": "gen", "doc": "syllabus"}
                 st.rerun()
 
-    # ── 연결 설정 ──
-    _key_ok = bool((ss.settings.api_key or "").strip())
-    with st.expander(f"연결 설정 — {'연결됨 ✓' if _key_ok else 'API 키 입력'}", expanded=not ss.had_key):
+    # ── 연결 설정 (ChatGPT 계정 OAuth · 구독) ──
+    _auth = oauth.status()
+    _logged = _auth["logged_in"]
+    with st.expander(f"연결 설정 — {'로그인됨 ✓' if _logged else 'ChatGPT 로그인 필요'}",
+                     expanded=not ss.had_login):
         s = ss.settings
-        s.base_url = st.text_input("LiteLLM URL", value=s.base_url)
-        s.api_key = st.text_input("API 키", value=s.api_key, type="password",
-                                  help="사내 대시보드(/ui/)에서 발급한 sk- 키")
-        # 모델은 고정(선택 제거) — 사용 모델을 명시만 한다. (산출물 확장 대비)
-        _cur = settings_mod.MODELS.get(s.model, s.model)
-        st.markdown(f"**사용 모델** · {_cur}")
-        st.caption(f"디자인 슬라이드(②)는 형식 안정성을 위해 비추론 모델({s.model.replace('-think', '')})을 자동 사용합니다.")
+        if _logged:
+            who = _auth.get("email") or _auth.get("account_id") or "계정"
+            st.success(f"ChatGPT 로그인됨 · {who}")
+            if st.button("로그아웃", use_container_width=True):
+                oauth.logout()
+                ss.had_login = False
+                ss.ping_status = None
+                st.rerun()
+        else:
+            st.caption("ChatGPT(Plus/Pro) 구독 계정으로 로그인합니다. 버튼을 누르면 브라우저가 "
+                       "열리고, 로그인하면 자동으로 연결됩니다(사내 API 키 불필요).")
+            if st.button("ChatGPT 로그인 →", use_container_width=True, type="primary"):
+                with st.spinner("브라우저에서 로그인하세요… (완료 시 자동 연결)"):
+                    ok, msg = oauth.login()
+                ss.had_login = ok
+                (st.success if ok else st.error)(msg)
+                if ok:
+                    st.rerun()
+
+        # 모델 선택 (구독에서 사용할 ChatGPT 모델 슬러그)
+        if st.button("모델 목록 불러오기 (계정 기준)", use_container_width=True, disabled=not _logged,
+                     help="로그인된 계정에서 실제 사용 가능한 모델 슬러그를 백엔드에서 조회해 목록을 채웁니다."):
+            with st.spinner("모델 목록 조회 중…"):
+                ss.model_options = llm_mod.list_models()
+            if not ss.model_options:
+                st.warning("목록을 가져오지 못했습니다. '직접 입력…'으로 슬러그를 넣어보세요.")
+            st.rerun()
+        # 불러온 목록이 있으면 그걸, 없으면 기본 후보를 사용
+        _opts = list(ss.model_options) if ss.model_options else list(settings_mod.MODELS.keys())
+        _custom = "직접 입력…"
+        _idx = _opts.index(s.model) if s.model in _opts else len(_opts)
+        _pick = st.selectbox("사용 모델", _opts + [_custom],
+                             index=min(_idx, len(_opts)),
+                             format_func=lambda m: settings_mod.MODELS.get(m, m))
+        if _pick == _custom:
+            s.model = st.text_input("모델 슬러그 직접 입력", value=s.model,
+                                    help="예: gpt-5.5, gpt-5.4, gpt-5.4-mini 등 계정에서 노출되는 슬러그")
+        else:
+            s.model = _pick
+        s.effort = st.selectbox("추론 강도(effort)", list(settings_mod.EFFORTS),
+                                index=list(settings_mod.EFFORTS).index(s.effort)
+                                if s.effort in settings_mod.EFFORTS else 1,
+                                help="gpt-5 계열의 사고 강도. 개요·비주얼 원고는 medium, 빠르게는 low.")
         s.unsplash_key = st.text_input("Unsplash Access Key (선택)", value=s.unsplash_key,
                                        type="password",
                                        help="넣으면 디자인 슬라이드 사진을 Unsplash(고품질)에서 가져옵니다. "
                                             "비우면 Openverse(무료 CC)로 동작. unsplash.com/developers 에서 무료 발급.")
         bc1, bc2 = st.columns(2)
-        if bc1.button("연결 테스트", use_container_width=True):
+        if bc1.button("연결 테스트", use_container_width=True, disabled=not _logged):
             with st.spinner("확인 중…"):
                 ss.ping_status = llm_mod.build_provider(s).ping()
         if bc2.button("저장", use_container_width=True, type="primary"):
             settings_mod.save(s)
-            ss.had_key = bool((s.api_key or "").strip())
+            st.success("설정을 저장했습니다.")
             st.rerun()
         if ss.ping_status:
             ok, msg = ss.ping_status
@@ -717,7 +816,7 @@ if ss.step == 3:
                 st.rerun()
 
     if ss.syllabus_md:
-        doc_ph, doc_ctrl = script_downloads("script_doc_md", "script_doc", False)
+        doc_ph, doc_ctrl = script_downloads("script_doc_md", "script_doc", False, busy=bool(pending))
         if pending and pending.get("doc") == "script_doc":
             _m = {"gen": "교재 작성 중…", "refine": "수정 반영 중…",
                   "check": "정렬 점검 중…"}.get(pending["kind"], "작성 중…")
@@ -734,11 +833,12 @@ if ss.step == 3:
 # ===========================================================================
 elif ss.step == 4:
     with st.container(border=True):
-        st.markdown(f'<div class="ida-panel-title">{ICON_SLIDE}슬라이드 생성 · STEP 4</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="ida-panel-title">{ICON_SLIDE}슬라이드 개요(원고) · STEP 4</div>', unsafe_allow_html=True)
         if not ss.syllabus_md:
             st.info("슬라이드는 강의계획서의 주차 목표를 상속합니다. 먼저 STEP 1~2에서 강의계획서를 생성하세요.")
         else:
-            st.caption("① 슬라이드 개요를 생성한 뒤 ② **이미지·레이아웃 정리**로 사진·도식이 배치된 디자인 .pptx 를 만듭니다.")
+            st.caption("차시 슬라이드 **개요(원고)** 를 생성합니다. 이후 **5단계** 노트북LM 렌더 코드, "
+                       "**6단계** 비주얼 원고·디자인 PPTX 로 이어집니다.")
             n_weeks = int(ss.form.get("weeks", 15))
             week_opts = list(range(1, n_weeks + 1))
             cc = st.columns([1.3, 3.4, 1.9])
@@ -756,27 +856,131 @@ elif ss.step == 4:
                                            "content": script_user_msg(ss.script_week, "ppt", note, ss.syllabus_md)}]
                     ss._pending = {"kind": "gen", "doc": "script_ppt"}
                     st.rerun()
+            if ss.script_ppt_md.strip():
+                nav = st.columns(2)
+                if nav[0].button("5단계 · 노트북LM 렌더 코드 →", use_container_width=True):
+                    ss.step = 5
+                    st.rerun()
+                if nav[1].button("6단계 · 비주얼 원고 · 디자인 PPTX →", use_container_width=True):
+                    ss.step = 6
+                    st.rerun()
 
+    if ss.syllabus_md:
+        ppt_ph, ppt_ctrl = script_downloads("script_ppt_md", "script_ppt", True, busy=bool(pending))
+        if pending and pending.get("doc") == "script_ppt" and pending.get("kind") in ("gen", "refine", "check"):
+            _m = {"gen": "슬라이드 개요 작성 중…", "refine": "수정 반영 중…",
+                  "check": "정렬 점검 중…"}.get(pending["kind"], "작성 중…")
+            with st.spinner(_m):
+                run_pending(pending, ppt_ph)
+            persist()
+            st.rerun()
+        else:
+            script_idle_body(ppt_ph, ppt_ctrl, "script_ppt_md", "script_ppt_msgs", "script_ppt",
+                             "위 '① 슬라이드 개요 생성'을 누르면 개요가 여기에 표시됩니다.")
+
+# ===========================================================================
+# STEP 5 — 노트북LM 렌더 코드
+# ===========================================================================
+elif ss.step == 5:
+    with st.container(border=True):
+        st.markdown(f'<div class="ida-panel-title">{ICON_SLIDE}노트북LM 렌더 코드 · STEP 5</div>', unsafe_allow_html=True)
+        if not ss.script_ppt_md.strip():
+            st.info("먼저 4단계에서 슬라이드 개요(원고)를 생성하세요.")
+        else:
+            st.caption("① 개요(원고)를 NotebookLM 소스로 붙여넣고 → ② 아래 **렌더 코드**를 NotebookLM 채팅에 "
+                       "붙여넣어 슬라이드를 생성합니다.")
+            _detected = slide_render.count_slides(ss.script_ppt_md)
+            r2 = st.columns([1.2, 1.2, 2.6, 1.8])
+            ss.render_total = r2[0].number_input("총 슬라이드", min_value=0, max_value=200, step=1,
+                                                 value=int(ss.render_total or _detected),
+                                                 help="0이면 개요에서 자동 감지. 보통 2시간=40장.")
+            ss.render_per_chunk = r2[1].number_input("한 번에(청크)", min_value=5, max_value=60, step=5,
+                                                     value=int(ss.render_per_chunk or 20),
+                                                     help="한 배치가 생성할 장수. 40장÷20 = 배치 2개.")
+            _dkeys = list(slide_render.DESIGN_SYSTEMS.keys())
+            ss.render_design = r2[2].selectbox("디자인 시스템", _dkeys,
+                                               index=_dkeys.index(ss.render_design)
+                                               if ss.render_design in _dkeys else 0,
+                                               format_func=lambda k: slide_render.DESIGN_SYSTEMS[k]["label"])
+            _ikeys = list(slide_render.INTENSITIES.keys())
+            ss.render_intensity = r2[3].selectbox("스타일 강도", _ikeys,
+                                                  index=_ikeys.index(ss.render_intensity)
+                                                  if ss.render_intensity in _ikeys else 1,
+                                                  format_func=lambda k: slide_render.INTENSITIES[k]["label"])
+            r2b = st.columns([3.4, 3.4])
+            _fkeys = list(slide_render.FORMATS.keys())
+            ss.render_format = r2b[0].selectbox("출력 형식", _fkeys,
+                                                index=_fkeys.index(ss.render_format)
+                                                if ss.render_format in _fkeys else 0,
+                                                format_func=lambda k: slide_render.FORMATS[k],
+                                                help="NotebookLM 이 커널 오버라이드 문구를 거부하면 BATCH(자연어)를 쓰세요.")
+            ss.render_pagenum = r2b[1].checkbox("페이지 번호 지시 포함", value=bool(ss.render_pagenum),
+                                                help="각 슬라이드 하단에 연속 페이지 번호를 넣도록 지시(생성기가 무시할 수 있음).")
+            gr = st.columns([2.6, 2.6, 3.0])
+            if gr[0].button("렌더 코드 생성", type="primary", use_container_width=True,
+                            disabled=(not ss.script_ppt_md.strip() and not ss.render_total)):
+                if not run_render_code():
+                    st.warning("먼저 4단계 개요를 생성하거나 ‘총 슬라이드’ 수를 입력하세요.")
+                else:
+                    st.rerun()
+            if ss.render_code:  # 다운로드는 상단에(스크롤 하단 X)
+                gr[1].download_button("⬇ 렌더 코드 (.txt)", ss.render_code.encode("utf-8"),
+                                      file_name=(ss.deck_name or out_name("슬라이드")) + "_노트북LM_렌더코드.txt",
+                                      mime="text/plain", key="dl_rendercode", use_container_width=True)
+
+    if ss.script_ppt_md.strip():
+        with st.expander("📋 슬라이드 개요(원고) 전체 복사 — NotebookLM 소스용",
+                         expanded=not bool(ss.render_code)):
+            st.caption("코드블록 **우상단 복사 아이콘**으로 전체 복사 → NotebookLM ‘소스 추가 → 복사한 텍스트 "
+                       "붙여넣기’. 또는 4단계에서 MD 파일을 내려받아 소스에 드래그.")
+            st.code(ss.script_ppt_md, language="markdown")
+        if ss.render_code:
+            with st.expander("노트북LM 렌더 코드 — NotebookLM 채팅에 붙여넣기", expanded=True):
+                st.caption("아래 코드를 NotebookLM 채팅에 붙여넣으면 슬라이드가 배치별로 생성됩니다. "
+                           "코드블록 우상단 아이콘으로 전체 복사.")
+                st.code(ss.render_code, language="text")
+
+# ===========================================================================
+# STEP 6 — 비주얼 원고 · 디자인 PPTX (SME 가 여기에 NotebookLM 슬라이드를 합침)
+# ===========================================================================
+elif ss.step == 6:
+    with st.container(border=True):
+        st.markdown(f'<div class="ida-panel-title">{ICON_SLIDE}비주얼 원고 · 디자인 PPTX · STEP 6</div>', unsafe_allow_html=True)
+        if not ss.script_ppt_md.strip():
+            st.info("먼저 4단계에서 슬라이드 개요(원고)를 생성하세요.")
+        else:
+            st.caption("**비주얼 원고**(사진 갈음 아트디렉션)와 **디자인 PPTX**(사진 좌·우 배치)를 만듭니다. "
+                       "이 **최종 PPTX** 를 내려받아 5단계(NotebookLM) 슬라이드를 SME 가 합칩니다.")
             _has_outline = bool(ss.script_ppt_md.strip())
-            bc = st.columns([2.6, 2.2, 2.2, 2.0])
-            if bc[0].button("② 이미지·레이아웃 정리 (디자인 PPT)",
-                            type="primary" if _has_outline else "secondary",
+            bc = st.columns([2.8, 2.8, 2.2])
+            if bc[0].button("① 비주얼 원고 생성 (사진 갈음)", type="primary",
+                            disabled=bool(pending), use_container_width=True):
+                if ensure_ready():
+                    ss._pending = {"kind": "visualbrief", "doc": "script_ppt"}
+                    st.rerun()
+            if bc[1].button("② 이미지·레이아웃 정리 (디자인 PPTX)", type="primary",
                             disabled=(not _has_outline) or bool(pending), use_container_width=True):
                 if ensure_ready():
                     ss._pending = {"kind": "design", "doc": "script_ppt"}
                     st.rerun()
-            if ss.deck_bytes:
-                bc[1].download_button("⬇ 디자인 PPTX", ss.deck_bytes,
-                                      file_name=(ss.deck_name or out_name("슬라이드")) + ".pptx",
-                                      mime=PPTX_MIME, key="dl_deck", use_container_width=True)
-                bc[2].download_button("⬇ 이미지 출처(.txt)", ss.credits_txt.encode("utf-8"),
-                                      file_name=(ss.deck_name or "슬라이드") + "_이미지출처.txt",
-                                      mime="text/plain", key="dl_credits", use_container_width=True)
+            # 다운로드는 상단에(완료 시 첫 산출물 위)
+            if ss.deck_bytes or ss.visual_brief_md:
+                dl = st.columns(3)
+                if ss.deck_bytes:
+                    dl[0].download_button("⬇ 디자인 PPTX (최종)", ss.deck_bytes,
+                                          file_name=(ss.deck_name or out_name("슬라이드")) + ".pptx",
+                                          mime=PPTX_MIME, key="dl_deck", use_container_width=True)
+                    dl[1].download_button("⬇ 이미지 출처(.txt)", ss.credits_txt.encode("utf-8"),
+                                          file_name=(ss.deck_name or "슬라이드") + "_이미지출처.txt",
+                                          mime="text/plain", key="dl_credits", use_container_width=True)
+                if ss.visual_brief_md:
+                    dl[2].download_button("⬇ 비주얼 원고 (.md)", ss.visual_brief_md,
+                                          file_name=(ss.deck_name or out_name("슬라이드")) + "_비주얼원고.md",
+                                          mime="text/markdown", key="dl_vbrief", use_container_width=True)
 
             _tpl_on = TEMPLATE_PATH.exists()
             with st.expander(f"PPT 회사 양식(.pptx) — {'적용됨 ✓' if _tpl_on else '기본 양식 사용 중'}"):
                 st.caption("회사 양식 .pptx 를 올리면 디자인 슬라이드가 그 마스터·로고를 상속합니다. "
-                           "로고는 양식의 **슬라이드 마스터**에 넣어두면 전 슬라이드에 표시됩니다. "
                            "(또는 assets/logo.png 를 두면 우상단 자동 삽입) 양식 파일은 로컬 assets/ 에만 저장됩니다.")
                 up = st.file_uploader("회사 양식 업로드 (.pptx / .potx)", type=["pptx", "potx"], key="tpl_up")
                 if up is not None:
@@ -787,23 +991,29 @@ elif ss.step == 4:
                     TEMPLATE_PATH.unlink(missing_ok=True)
                     st.rerun()
 
-    if ss.syllabus_md:
-        ppt_ph, ppt_ctrl = script_downloads("script_ppt_md", "script_ppt", True)
+    if ss.script_ppt_md.strip():
+        vb_ph = st.empty()
         if pending and pending.get("kind") == "design":
             status = st.empty()
             with st.spinner("이미지·레이아웃 정리 중… (구성 분석 → 사진 수집 → 빌드)"):
                 run_design(status)
             st.rerun()
-        elif pending and pending.get("doc") == "script_ppt":
-            _m = {"gen": "슬라이드 개요 작성 중…", "refine": "수정 반영 중…",
-                  "check": "정렬 점검 중…"}.get(pending["kind"], "작성 중…")
-            with st.spinner(_m):
-                run_pending(pending, ppt_ph)
+        elif pending and pending.get("kind") == "visualbrief":
+            with st.spinner("비주얼 원고 생성 중… (슬라이드별 아트디렉션)"):
+                run_visual_brief(vb_ph)
             persist()
             st.rerun()
+        elif ss.visual_brief_md:
+            with st.expander("비주얼 원고 (사진 갈음 아트디렉션)", expanded=True):
+                st.markdown(ss.visual_brief_md)
+                _ed = st.text_area("직접 편집", value=ss.visual_brief_md, height=260,
+                                   key="edit_vbrief", label_visibility="collapsed")
+                if st.button("비주얼 원고 편집 저장", key="save_vbrief", use_container_width=True):
+                    ss.visual_brief_md = _ed
+                    st.success("저장했습니다. (② 디자인 PPTX 사진 검색에 반영)")
+                    st.rerun()
         else:
-            script_idle_body(ppt_ph, ppt_ctrl, "script_ppt_md", "script_ppt_msgs", "script_ppt",
-                             "위 '① 슬라이드 개요 생성'을 누르면 개요가 여기에 표시됩니다.")
+            st.info("‘① 비주얼 원고 생성’ 또는 ‘② 디자인 PPTX’ 를 누르면 결과가 여기에 표시됩니다.")
 
 # ===========================================================================
 # STEP 1 — 강의계획서 전체 폭 (입력은 사이드바)

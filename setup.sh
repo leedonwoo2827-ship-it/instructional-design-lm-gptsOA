@@ -15,4 +15,4 @@ if [ ! -f ".env" ]; then
   echo "Created .env from .env.example"
 fi
 echo
-echo "Setup complete. Run ./run.sh to start. Enter your LiteLLM API key in the app sidebar."
+echo "Setup complete. Run ./run.sh to start. Sign in via the app sidebar: 'ChatGPT login'."

@@ -1,10 +1,10 @@
+# -*- coding: utf-8 -*-
 """GUI-managed settings persisted to data/user_settings.json.
 
-교수설계 가이드 에이전트는 사내 Ubion LiteLLM 프록시(OpenAI 호환)를 사용한다.
-URL·API 키·모델은 코드에 하드코딩하지 않고 사용자가 설정 화면(사이드바) 또는
-환경변수(.env)로 입력한다. 저장 파일과 .env 는 GitHub 에 올리지 않는다(.gitignore).
-
-패턴 차용: 260527-textmarketingLM/core/user_settings.py
+교수설계 가이드 에이전트는 사용자의 ChatGPT(Plus/Pro) 구독 계정으로 로그인해
+ChatGPT 백엔드(Responses API)를 사용한다(사내 LiteLLM 프록시 제거). 로그인 토큰은
+core/oauth.py 가 data/chatgpt_auth.json 에 관리하며, 여기서는 모델/토큰수/이미지 키
+같은 사용자 설정만 저장한다. 저장 파일과 .env, 토큰 파일은 GitHub 에 올리지 않는다.
 """
 from __future__ import annotations
 
@@ -15,37 +15,36 @@ from pathlib import Path
 
 SETTINGS_PATH = Path(__file__).resolve().parent.parent / "data" / "user_settings.json"
 
-DEFAULT_BASE_URL = "http://192.168.50.119:4000"
-DEFAULT_MODEL = "deepseek-v4-flash-think"
+DEFAULT_MODEL = "gpt-5.5"
 
-# 선택 가능한 모델 (id -> 표시 라벨). MIGRATION.md 매핑 기준.
+# 선택 가능한 ChatGPT 모델 슬러그 (id -> 표시 라벨) — 기본 후보.
+# 계정마다 허용 모델이 다르므로(예: 일부 계정은 'gpt-5.1' 미지원), 사이드바 '모델 목록
+# 불러오기'로 계정 기준 실제 목록을 받아 채우는 것을 권장한다. 직접 입력도 허용.
 MODELS: dict[str, str] = {
-    "claude-sonnet-4-6": "Claude Sonnet 4.6 (권장 · 균형)",
-    "claude-opus-4-7": "Claude Opus 4.7 (고품질)",
-    "claude-haiku-4-5": "Claude Haiku 4.5 (빠름 · 경제적)",
-    "deepseek-v4-flash": "DeepSeek V4 Flash (빠름 · 저비용)",
-    "deepseek-v4-flash-think": "DeepSeek V4 Flash Think (추론)",
-    "deepseek-v4-pro": "DeepSeek V4 Pro (고품질)",
+    "gpt-5.5": "GPT-5.5 (권장 · 범용)",
+    "gpt-5.4": "GPT-5.4",
+    "gpt-5.4-mini": "GPT-5.4 mini (빠름)",
 }
+
+EFFORTS = ("low", "medium", "high")
 
 
 @dataclass
 class Settings:
-    base_url: str = DEFAULT_BASE_URL
-    api_key: str = ""
     model: str = DEFAULT_MODEL
+    # gpt-5 계열 추론 강도(low|medium|high). 디자인/JSON 작업은 low 로 자동 하향.
+    effort: str = "medium"
     # 강의계획서/원고는 표가 많은 장문이라 넉넉히
     max_tokens: int = 10000
-    temperature: float = 0.7
+    temperature: float = 0.7  # 구독 Responses 경로에서는 미사용(호환 위해 유지)
     # 디자인 슬라이드 사진용(선택). 있으면 Unsplash, 없으면 Openverse.
     unsplash_key: str = ""
 
 
 def _env_defaults() -> Settings:
     s = Settings()
-    s.base_url = os.environ.get("UBION_LITELLM_URL", s.base_url)
-    s.api_key = os.environ.get("UBION_LITELLM_KEY", s.api_key)
-    s.model = os.environ.get("UBION_LITELLM_MODEL", s.model)
+    s.model = os.environ.get("CHATGPT_MODEL", s.model)
+    s.effort = os.environ.get("CHATGPT_EFFORT", s.effort)
     s.unsplash_key = os.environ.get("UNSPLASH_ACCESS_KEY", s.unsplash_key)
     return s
 
@@ -60,8 +59,8 @@ def load() -> Settings:
         return base
     merged = asdict(base)
     merged.update({k: v for k, v in data.items() if k in merged})
-    if merged.get("model") not in MODELS:
-        merged["model"] = DEFAULT_MODEL
+    if merged.get("effort") not in EFFORTS:
+        merged["effort"] = "medium"
     return Settings(**merged)
 
 
