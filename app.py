@@ -158,6 +158,13 @@ GEN_MAX_TOKENS = 16000
 SLIDE_LIST_TOKENS = 3000      # 슬라이드 제목 목록(1단계)
 SLIDE_EXPAND_TOKENS = 24000   # 슬라이드 상세(2단계, 다수 슬라이드)
 SLIDES_PER_HOUR = 20          # 1시간당 슬라이드 수
+# 검색어가 없는 슬라이드용 폴백(교육 일반, 로테이션으로 중복 최소화). 내용 불일치는 SME가 갈음.
+_FALLBACK_IMG_QUERIES = [
+    "university lecture classroom students", "teacher explaining whiteboard classroom",
+    "students group discussion table", "college students studying laptop",
+    "online learning video lecture student", "team collaboration meeting",
+    "books notebook study desk", "presentation projector classroom",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -420,14 +427,27 @@ def run_design(status) -> None:
     status.markdown("**① 슬라이드 구성 분석 중…** (레이아웃·사진 배치 결정)")
     plan = deck_builder.plan_from_outline(gen_fn, outline, deck_title, subtitle=subtitle)
 
-    # 4-3 비주얼 원고 반영: 사진 검색어 개선 / 대체(substitute) 슬라이드는 사진 건너뜀
+    # 요청: 모든 본문 슬라이드에 사진 1장씩(좌우 교차 배치). 내용 불일치는 SME가 갈음.
+    # 검색어 우선순위: 비주얼 원고(영문 쿼리) > 아트디렉터 image_query > 폴백 로테이션.
+    # 표지(index 0)만 제외하고 전부 photo 로 강제하되, 본문 텍스트(bullets)는 보존한다.
     briefs = slide_render.parse_visual_brief(ss.visual_brief_md)
-    for n, spec in briefs.items():
-        if 1 <= n < len(plan) and isinstance(spec, dict):
-            if spec.get("substitute"):
-                plan[n].pop("image_query", None)
-            elif spec.get("query") and plan[n].get("type") == "photo":
-                plan[n]["image_query"] = spec["query"]
+    for i in range(1, len(plan)):
+        s = plan[i]
+        if not s.get("bullets"):  # cards/compare/table → 텍스트 살려 photo 본문으로
+            filled = []
+            for it in (s.get("items") or []):
+                lbl, desc = it.get("label", ""), it.get("desc", "")
+                if lbl or desc:
+                    filled.append(f"{lbl} — {desc}" if (lbl and desc) else (lbl or desc))
+            if not filled and s.get("lines"):
+                filled = list(s["lines"])
+            if filled:
+                s["bullets"] = filled[:5]
+        q = ((briefs.get(i) or {}).get("query") or "").strip() or (s.get("image_query") or "").strip()
+        if not q:
+            q = _FALLBACK_IMG_QUERIES[i % len(_FALLBACK_IMG_QUERIES)]
+        s["type"] = "photo"
+        s["image_query"] = q
 
     queries = deck_builder.image_queries(plan)
     images = {}
@@ -436,9 +456,14 @@ def run_design(status) -> None:
         _ukey = (ss.settings.unsplash_key or "").strip()
         for k, (idx, q) in enumerate(queries.items(), 1):
             data, credit = image_search.fetch(q, cache=ss.img_cache, unsplash_key=_ukey)
+            if not data:  # 좁은 검색어가 0건이면 폴백으로 재시도 → 페이지마다 사진 보장
+                fb = _FALLBACK_IMG_QUERIES[idx % len(_FALLBACK_IMG_QUERIES)]
+                data, credit = image_search.fetch(fb, cache=ss.img_cache, unsplash_key=_ukey)
             if data:
                 images[idx] = data
                 plan[idx]["_credit"] = credit
+            else:
+                print(f"[design] 슬라이드 {idx + 1}: 사진 검색 실패(q='{q}')", flush=True)
             bar.progress(k / len(queries), text=f"주제 사진 수집 중… ({k}/{len(queries)})")
         bar.empty()
 

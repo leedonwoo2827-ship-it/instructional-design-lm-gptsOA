@@ -613,6 +613,7 @@ def plan_from_outline(generate_fn: Callable[[str, str, int], str],
         user = (f"{_ART_RULES}\n\n[덱 제목]\n{deck_title}\n"
                 f"[부분 {ci + 1}/{len(chunks)} · 이 부분의 슬라이드 {len(ch)}개를 빠짐없이 변환]\n\n"
                 f"[슬라이드 개요]\n{chunk_md}")
+        print(f"[art] 청크 {ci + 1}/{len(chunks)} 생성 중… ({len(ch)}장 · gpt 응답 대기, ~1–2분)", flush=True)
         try:
             raw = generate_fn(_ART_SYS, user, 12000)
         except Exception as e:  # noqa: BLE001
